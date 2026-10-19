@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -177,11 +176,4 @@ func TestUserVersionRoundTrip(t *testing.T) {
 	}
 }
 
-// str 与 db_test.go 的 num 同理是测试期取值助手，Task 7 之后归 rows.go 侧的正式映射取代。
-func str(v any) string {
-	s, ok := v.(string)
-	if !ok {
-		panic(fmt.Sprintf("store test: unexpected column type %T (%v)", v, v))
-	}
-	return s
-}
+// str/num 的行映射取值助手现在由 rows.go 提供（Task 7 归并，测试不再自带副本）。

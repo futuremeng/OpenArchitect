@@ -18,7 +18,8 @@ func TestOpenRoundTrip(t *testing.T) {
 		}
 	}()
 
-	// 表名故意带注入形状的字符与单引号，验证它们只会作为值进去，不参与 SQL 文本。
+	// 绑进去的「值」故意带注入形状的字符与单引号，验证它们只会作为 ? 参数
+	// 进去，不参与 SQL 文本。
 	if _, err := db.Execute(ctx, `CREATE TABLE needle (name TEXT)`); err != nil {
 		t.Fatalf("CREATE: %v", err)
 	}
@@ -50,25 +51,12 @@ func TestForeignKeysEnabled(t *testing.T) {
 	}
 }
 
-func newTestDB(t *testing.T) *DB {
+// newTestDB 收 testing.TB：测试与基准（bench_test.go 的 PoC-5）共用。
+func newTestDB(t testing.TB) *DB {
 	t.Helper()
 	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	return db
-}
-
-// num 是临时版：Task 7 把它移进 rows.go 后删掉这里的副本。
-func num(v any) float64 {
-	switch n := v.(type) {
-	case int64:
-		return float64(n)
-	case float64:
-		return n
-	default:
-		t := &testing.T{}
-		_ = t
-		panic("unexpected column type")
-	}
 }

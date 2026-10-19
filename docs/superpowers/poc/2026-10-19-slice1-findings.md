@@ -263,3 +263,59 @@
      等价操作），另在 `ui.NewTester` 里做字面意义的两次
      `tt.Advance(500ms)` 双重证据；主题按 flow 官方 example 以
      `theme.Apply(c)` 应用。go.mod/go.sum 零变更，三个 pin 无漂移。
+
+## PoC-5 单事务写快照（2121 条 Statement）
+
+- 结论：**PASS**。门槛"单事务 2100 条 `Statement` 不失败且可接受地快"达成：
+  实测口径是单事务 2121 条（1 快照 + 620 元素 + 1500 关系）全部 COMMIT 成功、
+  零失败；空库单快照写 4 次采样中位 ≈16.7 ms（14.7~28.3 ms），同一库连写
+  20 快照（库随写放大）三次跑次均值 23.2~41.8 ms/op。未触发失败/过慢分支，
+  分块提交 + 自实现 Savepoint 的失败分支保持未启动。"可接受地快"无门槛
+  数字，判断依据（全部对应下方"数字"行）：生产路径每次扫描只写一个快照，
+  该写相对 PoC-3 记过的 `packages.Load` 5~9 s 扫描墙钟是 ~300 倍小的零头，
+  且连写放大到 41.8 ms/op 仍被异步扫描链路（§10 取消/进度）完全掩盖。
+- 数字（`BenchmarkSaveSnapshot`，`internal/core/store/bench_test.go`；
+  条件：Apple M2 Max / darwin/arm64、go1.27.2、`CGO_ENABLED=0`、
+  mygo v0.5.5 `plugins/sqlite`（native libmygo-sqlite3，PoC-2 记录的
+  release 3.53.4-1）、库文件在 `t.TempDir()`、连接仅 `store.Open` 的
+  PRAGMA（foreign_keys=ON）、驱动 `Transaction` 内部 BEGIN IMMEDIATE；
+  命令 `go test ./internal/core/store/ -bench BenchmarkSaveSnapshot
+  -benchtime {1x,20x} -run '^$'`）：
+  - 语句数构成：1（INSERT snapshot）+ 620（INSERT arch_elements）+
+    1500（INSERT arch_relationships）= 2121 条，恰为 §6.4 规模
+    （≈600 Component + System/Container，≈1500 边）的合成快照，行形状
+    （methods JSON 列、weight、TEXT id）与真实扫描产出同构。
+  - `benchtime 1x`（新库只写 1 个快照，共 4 次跑次）：
+    16.5 ms / 16.9 ms / 14.7 ms / 28.3 ms，中位 ≈16.7 ms；其中首个带
+    `-benchmem` 的 1x 跑次记得 2,155,544 B/op、61,626 allocs/op。
+  - `benchtime 20x`（同一库连写 20 个快照、累计 ≈42,420 条子行，共 3 次
+    跑次）：均值 23.2 ms/op / 26.5 ms/op / 41.8 ms/op（库增长带来的
+    索引维护计入其中）。
+  - 失败次数：0。全部 7 个 bench 跑次合计 26 次单事务 2121 语句写，
+    `b.Fatal` 未触发、每次 COMMIT 成功、跑次全 PASS。
+  - 原子性（单测，非基准）：`TestSaveSnapshotRollsBackCompletely` PASS——
+    第 1 条语句违反 `architecture_snapshots.repo_id` 外键即整批回滚，
+    architecture_snapshots / arch_elements / arch_relationships 三张表
+    `count(*)` 均回读为 0。
+  - 检索上限（单测）：`TestSearchElementsHonoursLimit` PASS——60 个同名
+    候选经 `LIMIT ?`（`maxSearchResults = 50`）截回 50 条。
+- 影响：
+  1. W2 的"一次扫描 = 一个事务"以 `DB.Transact` 单事务落地并被实证：驱动
+      对任一条失败整批回滚（`database.go:165-229`，见上方回滚用例），
+      "半成品快照不可见"在单事务路径内天然成立，无需引入失败分支的
+      Savepoint 规则。
+  2. Task 8~11 的扫描产出可直接经 `SaveSnapshot` 落库，Task 12/13 的图
+      重建走 `Elements`/`Relationships`：读回序由 `ORDER BY element_id`
+      与 `ORDER BY from_id, to_id, relationship_type` 固定（round-trip
+      用例断言首位元素/关系），golden 比对前无需另行排序即可得确定序。
+  3. 对 brief 代码块的三处自身缺陷做了最小修正（语义不变，不改则无法
+      编译/过 vet）：`relationship.go` 块内未使用的 `sqlite` import 删除；
+      `rows_test.go` 的 `TestEscapeLike` 三个通配样例 want 缺 `%` 前后缀、
+      与比较式 `got = "%"+escapeLike(in)+"%"` 矛盾，want 补全为整段模式；
+      `snapshot_test.go` 回滚断言对 `num` 的 float64 返回用 `%d`（vet
+      报错）改 `%v`。
+  4. Task 2/6 审查挂账的三项清理完成：`db_test.go` 临时 `num` 副本（含
+      `t := &testing.T{}` 死分支）删除、"表名故意带注入形状的字符"注释
+      更正为绑定值；`newTestDB` 改收 `testing.TB` 供基准复用；
+      `migrate_test.go` 测试专用 `str`（panic 版）删除、归并到
+      `rows.go` 正式版，既有迁移/级联用例复跑 PASS。
