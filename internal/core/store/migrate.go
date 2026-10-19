@@ -6,8 +6,8 @@ import (
 )
 
 // Migrate applies every migration above the stored user_version, in order.
-// Each version's statements are CREATE TABLE/INDEX IF NOT EXISTS, so a
-// partially applied version is safe to replay.
+// Migrations run outside a transaction and user_version is bumped only after
+// every statement of a version succeeds, so each statement must be replay-safe.
 func (d *DB) Migrate(ctx context.Context) error {
 	current, err := d.UserVersion(ctx)
 	if err != nil {

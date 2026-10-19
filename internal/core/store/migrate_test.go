@@ -50,6 +50,39 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	}
 }
 
+// 真实重放路径：TestMigrateIsIdempotent 走 user_version == schemaVersion 的提前返回，
+// 一条 DDL 都不会再执行。这里把已迁移库的 user_version 回退到 0 再 Migrate，逐条重放
+// v1 全部语句，覆盖"半应用状态不标已迁移、整表重放收敛且既有数据无损"。
+func TestMigrateReplaysAllStatementsAfterRewind(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	defer db.Close()
+	if _, err := db.Execute(ctx,
+		`INSERT INTO repos (id, name, local_path, lang) VALUES ('repo:/replay', 'replay', '/replay', 'go')`); err != nil {
+		t.Fatalf("insert before rewind: %v", err)
+	}
+	if err := db.SetUserVersion(ctx, 0); err != nil {
+		t.Fatalf("rewind user_version: %v", err)
+	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("replay over already-created schema: %v", err)
+	}
+	v, err := db.UserVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != schemaVersion {
+		t.Fatalf("user_version after replay = %d, want %d", v, schemaVersion)
+	}
+	rows, err := db.Query(ctx, `SELECT name FROM repos WHERE id = 'repo:/replay'`)
+	if err != nil {
+		t.Fatalf("query after replay: %v", err)
+	}
+	if len(rows.Values) != 1 || str(rows.Values[0][0]) != "replay" {
+		t.Fatalf("row inserted before rewind did not survive replay: %v", rows.Values)
+	}
+}
+
 // 同一个文件第二次 Open：已迁移的库上 Migrate 必须是 no-op，不报错、版本不回退。
 func TestReopenMigratedDBIsNoOp(t *testing.T) {
 	ctx := context.Background()
