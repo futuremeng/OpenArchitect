@@ -50,3 +50,55 @@
      不受影响。
   5. 侧栏 220 DIP、居中占位文案的**像素级**目测留给控制器/人工验收；本任务内的
      等效证据链为上述 headless 断言 + 在屏窗口 + 关窗退出三项实测。
+
+## PoC-2 store 打开与驱动可用性（无 cgo）
+
+- 结论：**PASS**（`CGO_ENABLED=0` 下 `sqlite.Open` 在 Go-native mygo 应用里
+  打开真实库文件成功，且 `sqlite.LibraryPath()` 在 `go run` 与
+  `go tool mygo dev` 两种跑法下都找到了库。不是"能编译"级别的 PASS：
+  CREATE/INSERT/SELECT 含中文单引号分号样本往返、`PRAGMA foreign_keys` 实测
+  回读、`probe.db` 真实落盘全做过）。
+- 数字：
+  - `go tool mygo dev`：构建 1.4s；app 日志给出
+    `sqlite library: <worktree>/.mygo/dev/darwin-arm64/OpenArchitect Dev.app/Contents/Resources/libmygo-sqlite3.dylib`
+    （dev 工具把库放进 app Resources，`Load()` 优先走
+    `mygo.App.Path(mygo.PathResources)` 的分支被实证）+ `store.Open ok`。
+  - `go run .`：`sqlite library: ~/Library/Caches/mygo/natives/f78fe493…4d0/libmygo-sqlite3.dylib`
+    + `store.Open ok`。首次跑法下库不存在，插件从 GitHub release 下载
+    `mygo-sqlite3-darwin-arm64.dylib`（1,551,032 字节，URL
+    `github.com/egoist/mygo/releases/download/sqlite-3.53.4-1/…`，
+    SHA-256 `f78fe493…` 校验通过后按摘要目录名入缓存；curl 实测该 URL
+    HTTP 200 / 2.4s 可达，本机 GitHub 可达而 proxy.golang.org 不可达）。
+  - 单测（`CGO_ENABLED=0 go test ./internal/core/store/ -v`）：
+    TestOpenRoundTrip PASS 2.32s（含首下库时间）、TestForeignKeysEnabled
+    PASS 0.00s；包级缓存复跑 0.487s。`go vet ./... && go test ./...` 全绿，
+    输出无告警。`go.mod`/`go.sum` 零变更（sqlite 是 mygo 的子包，purego 已在
+    既有纯 Go 闭包里，未引入任何 cgo 依赖）。
+- 影响 / 与 brief 的偏差记录：
+  1. 全部 API 逐条对照模块缓存源码核实（`mygo@v0.5.5/plugins/sqlite/`），
+     brief 代码真实可用：`Open(ctx, path, OpenOptions) (*DB, error)`、
+     `Execute/Query(ctx, sql, args...) (Result|Rows, error)`、
+     `Transaction(ctx, []Statement) ([]Result, error)`、`Close() error`、
+     `LibraryPath() (string, error)` 签名一致；`Rows{Columns []string;
+     Values [][]any}` 是结构体快照而非游标（`database.go:50`），故测试直接
+     下标 `Values[0][0]`；查询值类型只有 nil/int64/float64/string/[]byte，
+     临时版 `num` 只需 int64/float64 两个 case（实测 PRAGMA 返回 int64）。
+  2. `OpenOptions` 的 doc 注释 "Foreign keys are enabled by default" **属实**
+     （临时探针直接 `sqlite.Open` 后立即查询 `PRAGMA foreign_keys` = 1，插件
+     源码无任何 foreign_keys 处理，默认 1 来自库的编译期宏
+     `SQLITE_DEFAULT_FOREIGN_KEYS=1`，见 `native/build.zig:23`）。brief 在
+     `Open` 里显式跑 `PRAGMA foreign_keys = ON` 是幂等双保险，按 brief 原样保留。
+  3. `Execute` 明确拒绝事务控制语句（BEGIN/COMMIT/ROLLBACK、ATTACH、VACUUM
+     INTO，见 `database.go:141-144`），语句分组只走 `Transaction`（内部
+     `BEGIN IMMEDIATE`，任一失败整体回滚）。Task 7 的"单事务写快照"必须经
+     `DB.Transact`，不能自己 Execute BEGIN。
+  4. `Path()` 方法未列在 brief 的 Interfaces 清单里，但 brief 的 db.go 代码
+     块包含它——照代码块落地；Task 6/14 定位库文件时会用到。
+  5. 打包形态注意：`LibraryPath` 对 `mygo.App.IsPackaged()` 为真的 app 不再
+     回退下载，缺库直接报错——Task 22/24 的打包链路必须保证 dylib 进
+     Resources。R1 例外维持原样：`plugins/sqlite` 目前只被
+     `internal/core/store` 引用（临时探针曾在 main.go 引用，测完已用 Edit
+     还原，`git diff main.go` 为空）。
+  6. PoC-2 门槛的两半（Go test 无 cgo 打开真库 + app 上下文里
+     `LibraryPath()` 找库）都已实测通过；Task 24 提到的"PoC-2 剩下的一半"
+     若指打包形态（IsPackaged）下的库路径，仍留给 Task 24 验。
