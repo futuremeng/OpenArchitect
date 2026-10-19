@@ -25,6 +25,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		_ = handle.Close()
 		return nil, fmt.Errorf("store: foreign_keys: %w", err)
 	}
+	if err := db.Migrate(ctx); err != nil {
+		_ = handle.Close()
+		return nil, err
+	}
 	return db, nil
 }
 
