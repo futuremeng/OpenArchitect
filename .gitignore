@@ -1,2 +1,6 @@
 /.worktrees/
 /.superpowers/
+# mygo 构建与开发产物（来自官方 native 模板的 .gitignore）
+/build/
+/.mygo/
+mygo_windows_*.syso
