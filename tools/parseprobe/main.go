@@ -1,5 +1,6 @@
 // Command parseprobe measures go/packages cost on a real repository: exported
-// named types, edges, wall time and peak heap. Throwaway harness for PoC-3.
+// named types, wall time and return-time heap snapshot. Throwaway harness for
+// PoC-3.
 package main
 
 import (

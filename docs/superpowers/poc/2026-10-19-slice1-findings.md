@@ -112,14 +112,15 @@
   （onevra、无 NeedDeps、该模式冷启动首跑），全程最大 sys 887.8 MB、最大
   HeapAlloc 672.3 MB，离门槛一个数量级。保留 NeedDeps 的实测依据：
   (a) 它对稳态耗时的代价只有约 3~7 s（mygo 1.7→7.3 s、onevra 0.9~7.0→5~8 s），
-  内存代价约 +350~550 MB HeapAlloc（mygo ~275→672 MB、onevra ~84→632~672 MB），
+  内存代价约 +350~550 MB HeapAlloc（mygo ~275→672 MB、onevra ~84→593~645 MB），
   均在门槛内；(b) §6.4 的 `depends_on`/`calls` 边要求跨包类型对象同一性
   （`types.Info.Uses` 解析到别的包的 `*types.TypeName`），brief 自己的判断
   （"NeedTypes 在类型检查跨包时基本必须依赖它"）与实测一致——去掉 NeedDeps
   后本包导出类型计数不变，但那只证明"数数"不受影响，边生成需要依赖类型完整
   加载，不值得为省内存赌在 Task 10 的正确性上；(c) 模式切换本身会让 `go list`
-  按新驱动参数重跑，去掉 NeedDeps 的首跑反而最慢（25.4 s / 24.8 s），
-  "收窄即加速"的预期在真实缓存行为下不成立。
+  按新驱动参数重跑，出现全场最慢的一次读数——onevra 去 NeedDeps 的冷启动
+  首跑 25.4 s（见下方"数字"该模式唯一一条冷跑记录），"收窄即加速"的预期在
+  真实缓存行为下不成立。
 - 数字（探针 `go run ./tools/parseprobe -root <路径>`，GOFLAGS 默认、
   GOPROXY=goproxy.cn；"冷"= 该模式首跑，"热"= 缓存就绪后的复跑，热跑取 2~3 次）：
   - 仓库 A：`/Users/futuremeng/go/pkg/mod/github.com/oneo-me/onevra/source@v0.2026.12`
@@ -141,8 +142,9 @@
     - NeedDeps 开↔关（热稳态）：耗时 +5~6 s（mygo 1.7→7.3 s），
       HeapAlloc +约 360~400 MB，sys +约 560 MB。
   - 计数口径注意：探针按 brief 的 `componentOf` 数的是**自身包全部导出
-    named struct/interface 类型**，未扣 main 包类型与 `_test.go`（§6.3 的
-    Component 排除集会略低于此数），即 519/138 是 Component 数的上界。
+    named struct/interface 类型**，未扣 main 包类型（§6.3 的 Component
+    排除集会略低于此数），即 519/138 是 Component 数的上界；`packages.Load`
+    未传 `Tests: 1`，`_test.go` 本就不被加载、不在计数口径之内。
     两模式下 exportedTypes 计数完全一致（138/519），说明本包枚举不依赖
     NeedDeps——这是探针口径的实测，不是边质量的实测。
   - 内存口径注意：heapAllocMB 是 `packages.Load` 返回后的即时存活堆、sysMB 是
