@@ -370,11 +370,12 @@ CREATE TABLE IF NOT EXISTS arch_elements (
     description TEXT NOT NULL DEFAULT '',
     repo_id TEXT NOT NULL,
     file_path TEXT NOT NULL DEFAULT '',
+    methods_json TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (snapshot_id, element_id)
 );
 CREATE INDEX IF NOT EXISTS idx_elements_repo ON arch_elements(repo_id);
 CREATE INDEX IF NOT EXISTS idx_elements_name ON arch_elements(name);
-CREATE INDEX IF NOT EXISTS idx_elements_type ON arch_elements(element_id);
+CREATE INDEX IF NOT EXISTS idx_elements_element ON arch_elements(element_id);
 
 CREATE TABLE IF NOT EXISTS arch_relationships (
     snapshot_id TEXT NOT NULL REFERENCES architecture_snapshots(id) ON DELETE CASCADE,
@@ -392,6 +393,8 @@ CREATE TABLE IF NOT EXISTS app_config (
     value TEXT NOT NULL
 );
 ```
+
+本 DDL 与已提交的 `internal/core/store/schema.go` 逐字对齐，两处修正是有意为之而非笔误：`arch_elements.methods_json` 一列来自计划修正案 1（§16 U3 选定选项 (a)，扫描时写入导出方法名）；索引名由原文 `idx_elements_type` 更正为 `idx_elements_element`（该索引建在 `element_id` 上，原名与自身目标列矛盾）。
 
 相对源文档 5.1 的改动：删 `elements_json`/`relationships_json`（偏差 5）、删 `features`/`commits`（偏差 7）、删 `arch_elements.id` 自增主键与 `metadata_json`/`tech_stack`/`owner`（偏差 8）、`repos` 去 `url`/`branch`（偏差 9）、`package_errors_json` 新增（承载 §10 的部分失败）、`weight` 新增（承载 §6.4 的多重性）。
 
