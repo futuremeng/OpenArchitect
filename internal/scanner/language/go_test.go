@@ -63,6 +63,29 @@ func TestSimpleMultiMainElements(t *testing.T) {
 	if strings.Contains(strings.Join(idsOf(out.Elements), " "), "hidden") {
 		t.Fatal("unexported type leaked into elements")
 	}
+	// §6.3 归属规则的正反两面都要有边断言：Cart 被两个 main 传递引用（多归属）
+	// → 只挂 System；两个 Container 只接收 System→Container 边。若多归属规则
+	// 被改成「每个可达 Container 都挂一条」，下面既会多出 ctn→cmp 边（显式
+	// 拒绝），也会让精确清单失配。
+	var contains []string
+	for _, r := range out.Relationships {
+		if r.Type != model.RelContains {
+			continue
+		}
+		if strings.HasPrefix(r.FromID, "ctn:") && strings.HasPrefix(r.ToID, "cmp:") {
+			t.Fatalf("multi-owner component must not hang on a container: %s -> %s", r.FromID, r.ToID)
+		}
+		contains = append(contains, r.FromID+" -> "+r.ToID)
+	}
+	slices.Sort(contains)
+	wantContains := []string{
+		"sys:example.com/simple -> cmp:example.com/simple/internal/store.Cart",
+		"sys:example.com/simple -> ctn:example.com/simple/cmd/api",
+		"sys:example.com/simple -> ctn:example.com/simple/cmd/worker",
+	}
+	if !slices.Equal(contains, wantContains) {
+		t.Fatalf("contains =\n%v\nwant\n%v", contains, wantContains)
+	}
 }
 
 func TestSystemElementDescribesTheModule(t *testing.T) {
@@ -116,6 +139,16 @@ func TestSharedLibContainment(t *testing.T) {
 
 func TestGenericAndInterfaceElements(t *testing.T) {
 	out := parseFixture(t, "generic-and-iface")
+	// §6.3 排除集：fixture 里的 `type Sink = Reader` 是别名而非此处声明的命名
+	// 类型（§6.3 要求 `Type() == Obj()`），不得成为自己的 Component。别名在
+	// 生产代码里漏网时还会按被别名类型的身份复写出元素，所以下面的 want 清单
+	// （条数与内容都定死）同样属于这条排除的断言：放宽 exportedComponentTypes
+	// 守卫会让这里以多出的元素 loudly 失败。
+	for _, e := range out.Elements {
+		if e.ID == "cmp:example.com/generic/iface.Sink" {
+			t.Fatalf("type alias became its own component: %+v", e)
+		}
+	}
 	want := []string{
 		"cmp:example.com/generic/box.Box", "cmp:example.com/generic/box.Pair",
 		"cmp:example.com/generic/iface.Reader",
@@ -138,11 +171,26 @@ func TestGenericAndInterfaceElements(t *testing.T) {
 			t.Fatalf("fixture has no main package, got container %q", e.ID)
 		}
 	}
-	// 无 main 包：没有任何 Component 该挂到 Container 上。
+	// 无 main 包：没有任何 Component 该挂到 Container 上；同时把 §6.3 归属规则
+	// 的「不被任何 main 引用 → 挂 System」写成精确的正向断言——三条 sys→cmp
+	// 边少任何一条（或改了挂法）都会让下面失配。
+	var contains []string
 	for _, r := range out.Relationships {
-		if r.Type == model.RelContains && strings.HasPrefix(r.FromID, "ctn:") {
-			t.Fatalf("unexpected container edge %+v", r)
+		if r.Type == model.RelContains {
+			if strings.HasPrefix(r.FromID, "ctn:") {
+				t.Fatalf("unexpected container edge %+v", r)
+			}
+			contains = append(contains, r.FromID+" -> "+r.ToID)
 		}
+	}
+	slices.Sort(contains)
+	wantContains := []string{
+		"sys:example.com/generic -> cmp:example.com/generic/box.Box",
+		"sys:example.com/generic -> cmp:example.com/generic/box.Pair",
+		"sys:example.com/generic -> cmp:example.com/generic/iface.Reader",
+	}
+	if !slices.Equal(contains, wantContains) {
+		t.Fatalf("contains =\n%v\nwant\n%v", contains, wantContains)
 	}
 }
 

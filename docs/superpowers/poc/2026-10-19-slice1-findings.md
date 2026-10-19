@@ -171,6 +171,31 @@
      `go.mod`），按 brief 的 fallback 用 mygo 模块目录充当第二仓库；
      300~600 导出类型档由 mygo=519 覆盖。
 
+### PoC-3 补记（Task 9）：`packagesNeedAll` 增补 `NeedImports` 位
+
+- 现状：`internal/scanner/language/go.go` 与 `tools/parseprobe/main.go` 两份
+  `packagesNeedAll` 均已同步为
+  `NeedName|NeedFiles|NeedSyntax|NeedTypes|NeedTypesInfo|NeedImports|NeedDeps|NeedModule`。
+  上方「结论」里的整串位是本节补记前的定稿，保持不变的部分只有 NeedDeps 的去留判断。
+- 原因：x/tools@v0.52.0 的 driver 在 `requestedMode&NeedImports == 0` 时会把
+  `pkg.Imports` 清空，而 §6.3 的 Container 归属遍历正是靠 `pkg.Imports` 走传递引用；
+  缺这一位时遍历一步迈不出去，所有 Component 的 contains 边退化为 System→Component
+  （Task 9 实现期 Run C 实测：shared-lib 的 ctn→cmp 两条边全部丢失）。该位零额外
+  成本：`impliedLoadMode` 对 NeedDeps/NeedTypes/NeedTypesInfo 本就蕴含 NeedImports，
+  导入图已经建好，这一位只是别让 driver 把它扔掉。
+- 复测数字（逐字取自 task-9-report.md §4.3；仓库 mygo@v0.5.5；命令
+  `go run ./tools/parseprobe -root <mygo@v0.5.5>`；格式 elapsed/heapAllocMB/sysMB）：
+  - 加位前 2 次：`1.015s/727.3/779.7`（该次同时记录 pkgs=108 ownPkgs=108
+    exportedTypes=519 packageErrors=0）；`848ms/635.0/916.0`。
+  - 加位后 3 次：`925ms/671.0/879.4`、`885ms/650.7/903.7`、`859ms/630.0/895.9`。
+  - 计数前后完全一致（exportedTypes=519、pkgs=108），与 NeedDeps 开/关的既有
+    结论「本包枚举不依赖跨包位」互证。
+- 口径与如实说明：以上都是探针在 `packages.Load` 返回时的墙钟耗时与即时存活堆/
+  运行时保留量读数，**不是**新的峰值 RSS 测量，PoC-3 的 60 s / 2 GB 门槛结论不因
+  本补记重开。报告的 5 次读数未标注冷/热，且加位前第一次（1.015s/727.3 MB）是
+  全场最高、高于加位后全部 3 次——「耗时内存在噪声范围内」是 task-9-report.md
+  的原判定，此处如实转录，不做平滑，样本量小的局限一并记录。
+
 ## PoC-4 flow 在 600 节点下的帧时间与稳定性
 
 - 结论：**PASS**（门槛两半都实测成立，非"能渲染"级别）。

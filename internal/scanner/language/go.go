@@ -108,6 +108,10 @@ func (a goAdapter) Parse(ctx context.Context, root string) (Output, error) {
 		}
 	}
 
+	// packages.Load gives no order guarantee for its slice, and the global
+	// constraint requires sorted elements before Task 11's golden comparison.
+	slices.SortFunc(elements, func(a, b model.Element) int { return strings.Compare(a.ID, b.ID) })
+
 	out := Output{ModulePath: modulePath, Elements: elements, PackageErrors: packageErrors}
 	out.Relationships = relationships(modulePath, pkgs, comps, containers)
 	return out, nil
@@ -133,6 +137,18 @@ func exportedComponentTypes(pkg *packages.Package) []*types.Named {
 		}
 		named, ok := tn.Type().(*types.Named)
 		if !ok {
+			continue
+		}
+		// spec §6.3's Component rule requires a named type: `Type() == Obj()`.
+		// A type alias (`type Sink = Reader`, `type Handler = http.Handler`) is a
+		// TypeName whose type resolves to the *aliased* object's *types.Named, so
+		// without this guard the alias would emit a Component built from another
+		// type's declaration — a duplicate/foreign element whose FilePath can even
+		// be computed from a file outside the repo (§6.3 排除集). On go1.27 the
+		// materialised *types.Alias already fails the assertion above; the guard
+		// is the same rule written against the type object so the exclusion does
+		// not depend on that toolchain detail.
+		if named.Obj() != tn {
 			continue
 		}
 		switch named.Underlying().(type) {
