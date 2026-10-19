@@ -97,7 +97,7 @@ func (a goAdapter) Parse(ctx context.Context, root string) (Output, error) {
 		docs := typeDocs(pkg)
 		for _, named := range exportedComponentTypes(pkg) {
 			id := model.ComponentID(pkg.PkgPath, named.Obj().Name())
-			c := &component{pkgPath: pkg.PkgPath, named: named}
+			c := &component{id: id, pkgPath: pkg.PkgPath, named: named}
 			comps[id] = c
 			elements = append(elements, model.Element{
 				ID: id, Type: model.TypeComponent, Name: named.Obj().Name(),
@@ -118,8 +118,10 @@ func (a goAdapter) Parse(ctx context.Context, root string) (Output, error) {
 }
 
 // component is a named type the scanner treats as a C4 Component. It carries
-// only what the edge rules need: where it lives, and the type itself.
+// only what the edge rules need: its element id, where it lives, and the type
+// itself.
 type component struct {
+	id      string
 	pkgPath string
 	named   *types.Named
 }
@@ -278,9 +280,19 @@ func load(ctx context.Context, root string) ([]*packages.Package, string, error)
 	return pkgs, modulePath, nil
 }
 
-// relationships derives the edges. Task 10 adds depends_on and calls.
+// relationships derives the edges: contains first, then the Task 10
+// depends_on/calls inferences. Same (from,to,type) triples merge into one edge
+// with accumulated Weight (spec §6.4 去重与多重性); intra-package pairs are
+// kept in storage and only skipped when drawing.
 func relationships(modulePath string, pkgs []*packages.Package,
 	comps map[string]*component, containers map[string]bool) []model.Relationship {
+	// comps is keyed by element id; the ownership fallback needs the reverse
+	// (package -> components declared in it), so index once here.
+	byPackage := map[string][]*component{}
+	for _, comp := range comps {
+		byPackage[comp.pkgPath] = append(byPackage[comp.pkgPath], comp)
+	}
+
 	var acc []model.Relationship
 	// System -> every Container.
 	for pkgPath := range containers {
@@ -293,7 +305,207 @@ func relationships(modulePath string, pkgs []*packages.Package,
 	for _, owner := range componentOwners(modulePath, pkgs, comps, containers) {
 		acc = append(acc, model.Relationship{FromID: owner.from, ToID: owner.toID, Type: model.RelContains, Weight: 1})
 	}
+	for _, pkg := range pkgs {
+		if isTestVariant(pkg.ID) || pkg.Name == "main" || !ownPackage(modulePath, pkg.PkgPath) {
+			continue
+		}
+		acc = append(acc, dependsOnEdges(modulePath, pkg, comps, byPackage)...)
+		acc = append(acc, callsEdges(modulePath, pkg, comps, byPackage)...)
+	}
 	return dedup(acc)
+}
+
+// componentIDFor turns a named type into its element id, reporting false for
+// anything that is not a component of this scan (dependency types, unexported,
+// builtin types with no package). No alias guard (unlike exportedComponentTypes):
+// the *types.Named cast in dependsOnEdges already rejects materialised aliases,
+// and types.Unalias would let an alias masquerade as its target type.
+func componentIDFor(modulePath string, named *types.Named) (string, bool) {
+	obj := named.Obj()
+	if obj == nil || !obj.Exported() || obj.Pkg() == nil {
+		return "", false
+	}
+	pkgPath := obj.Pkg().Path()
+	if !ownPackage(modulePath, pkgPath) {
+		return "", false
+	}
+	return model.ComponentID(pkgPath, obj.Name()), true
+}
+
+// edgeOwnership answers "which Component owns this source position?" — the
+// attribution rule behind spec §6.4. A position inside a method whose receiver
+// is a Component belongs to that Component; otherwise the nearest preceding
+// component declaration in the same file owns it; a file-level function with no
+// such owner contributes no edge.
+func edgeOwnership(modulePath string, pkg *packages.Package, byPackage map[string][]*component,
+	pos token.Pos) (string, bool) {
+	if pkg.Fset == nil || !pos.IsValid() {
+		return "", false
+	}
+	target := pkg.Fset.Position(pos)
+	for _, syntax := range pkg.Syntax {
+		if pkg.Fset.Position(syntax.Pos()).Filename != target.Filename {
+			continue
+		}
+		return ownershipInFile(modulePath, pkg, byPackage, syntax, target.Line)
+	}
+	return "", false
+}
+
+func ownershipInFile(modulePath string, pkg *packages.Package, byPackage map[string][]*component,
+	file *ast.File, line int) (string, bool) {
+	var owner string
+	ast.Inspect(file, func(node ast.Node) bool {
+		decl, ok := node.(*ast.FuncDecl)
+		if !ok || decl.Body == nil || decl.Recv == nil {
+			return true
+		}
+		start, end := pkg.Fset.Position(decl.Pos()).Line, pkg.Fset.Position(decl.End()).Line
+		if line < start || line > end {
+			return true
+		}
+		named, ok := receiverNamed(pkg.TypesInfo.Defs[decl.Name])
+		if !ok {
+			return true
+		}
+		owner, _ = componentIDFor(modulePath, named)
+		return owner == ""
+	})
+	if owner != "" {
+		return owner, true
+	}
+	return nearestPrecedingComponent(modulePath, pkg, byPackage, file, line)
+}
+
+func nearestPrecedingComponent(modulePath string, pkg *packages.Package,
+	byPackage map[string][]*component, file *ast.File, line int) (string, bool) {
+	filename := pkg.Fset.Position(file.Pos()).Filename
+	best, bestLine := "", -1
+	for _, comp := range byPackage[pkg.PkgPath] {
+		obj := comp.named.Obj()
+		if pkg.Fset.Position(obj.Pos()).Filename != filename {
+			continue
+		}
+		if declared := pkg.Fset.Position(obj.Pos()).Line; declared <= line && declared > bestLine {
+			best, bestLine = comp.id, declared
+		}
+	}
+	return best, best != ""
+}
+
+func receiverNamed(obj types.Object) (*types.Named, bool) {
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		return nil, false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() == nil {
+		return nil, false
+	}
+	return baseNamed(sig.Recv().Type())
+}
+
+func baseNamed(t types.Type) (*types.Named, bool) {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, ok := t.(*types.Named)
+	return named, ok
+}
+
+// go/ast has no Unparen, so parens come off by hand.
+func astUnparen(e ast.Expr) ast.Expr {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			return e
+		}
+		e = p.X
+	}
+}
+
+func owns(comps map[string]*component, id string) bool {
+	_, ok := comps[id]
+	return ok
+}
+
+func dependsOnEdges(modulePath string, pkg *packages.Package, comps map[string]*component,
+	byPackage map[string][]*component) []model.Relationship {
+	if pkg.TypesInfo == nil {
+		return nil
+	}
+	var out []model.Relationship
+	for ident, used := range pkg.TypesInfo.Uses {
+		tn, ok := used.(*types.TypeName)
+		if !ok {
+			continue
+		}
+		named, ok := tn.Type().(*types.Named)
+		if !ok {
+			continue
+		}
+		to, isComponent := componentIDFor(modulePath, named)
+		if !isComponent || !owns(comps, to) {
+			continue
+		}
+		from, ok := edgeOwnership(modulePath, pkg, byPackage, ident.Pos())
+		if !ok || from == to {
+			continue
+		}
+		out = append(out, model.Relationship{FromID: from, ToID: to, Type: model.RelDependsOn, Weight: 1})
+	}
+	return out
+}
+
+func callsEdges(modulePath string, pkg *packages.Package, comps map[string]*component,
+	byPackage map[string][]*component) []model.Relationship {
+	if pkg.TypesInfo == nil {
+		return nil
+	}
+	var out []model.Relationship
+	for _, syntax := range pkg.Syntax {
+		ast.Inspect(syntax, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			target, ok := calledComponent(pkg, call)
+			if !ok {
+				return true
+			}
+			to, isComponent := componentIDFor(modulePath, target)
+			if !isComponent || !owns(comps, to) {
+				return true
+			}
+			if from, owned := edgeOwnership(modulePath, pkg, byPackage, call.Pos()); owned && from != to {
+				out = append(out, model.Relationship{FromID: from, ToID: to, Type: model.RelCalls, Weight: 1})
+			}
+			return true
+		})
+	}
+	return out
+}
+
+// calledComponent resolves a call's subject. A method value resolves to its
+// receiver type; an interface method therefore lands on the interface itself,
+// which is where static analysis stops (spec §6.4).
+func calledComponent(pkg *packages.Package, call *ast.CallExpr) (*types.Named, bool) {
+	switch fun := astUnparen(call.Fun).(type) {
+	case *ast.SelectorExpr:
+		if sel := pkg.TypesInfo.Selections[fun]; sel != nil && sel.Kind() != types.FieldVal {
+			if named, ok := baseNamed(sel.Recv()); ok {
+				return named, true
+			}
+		}
+		if obj := pkg.TypesInfo.Uses[fun.Sel]; obj != nil {
+			return receiverNamed(obj)
+		}
+	case *ast.Ident:
+		if obj := pkg.TypesInfo.Uses[fun]; obj != nil {
+			return receiverNamed(obj)
+		}
+	}
+	return nil, false
 }
 
 type ownership struct{ from, toID string }

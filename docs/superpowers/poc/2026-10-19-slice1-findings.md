@@ -196,6 +196,33 @@
   全场最高、高于加位后全部 3 次——「耗时内存在噪声范围内」是 task-9-report.md
   的原判定，此处如实转录，不做平滑，样本量小的局限一并记录。
 
+### PoC-3 补记（Task 10）：边路径（`language.Parse` 端到端）真实仓库实测
+
+- 动机：上方全部数字口径都是 `packages.Load`（load + 类型检查）的耗时；Task 10
+  新增的边推导（`edgeOwnership` 对每个候选位置扫 `pkg.Syntax`、`dependsOnEdges`
+  遍历 `TypesInfo.Uses`）此前没有任何真实仓库测量。Task 24 的验收依赖这个数，
+  所以在本任务补一次，只记录、不据此优化（判定基准：spec §4.3 DoD 第 187 行的
+  "起窗口后 60 秒内出图"上限；慢的判据取 load-only 基线的约 5 倍）。
+- 命令（单次，非复跑；2026-10-19）：
+  `go run ./tools/parseprobe -parse -root /Users/futuremeng/go/pkg/mod/github.com/egoist/mygo@v0.5.5`
+  （`-parse` 模式为本次新增：走 `internal/scanner/language` 注册表的 `Adapter.Parse`
+  全链路 = load + 元素抽取 + depends_on/calls 边推导，输出端到端墙钟与计数）。
+- 数字：`module=github.com/egoist/mygo elements=543 relationships=2414
+  packageErrors=0 elapsed=2.029s`（环境 GOFLAGS 默认、GOPROXY=goproxy.cn、
+  CGO_ENABLED=0，go build 缓存在本次会话的 vet/test 后已热，属"热"态读数）。
+- 对照 load-only 基线（同一仓库、同为本机复测数字）：
+  - vs Task 9 补记的 NeedImports 加位后热态 load-only `859ms~925ms`：边路径把
+    Parse 全链路推到 2.029s，即边+元素推导的净增约 1.1s、总耗时约 2.2~2.4×。
+  - vs PoC-3 原始 load-only 记录（全串热 7.26~8.80s、冷 18.27s）：2.029s 反而
+    低于该档，说明当年那批数字受 go list/构建缓存冷态支配，边推导本身不是大头。
+- 结论：**PASS，不慢**（未触及"约 5× load-only 基线、数十秒"的慢判据，距 60 s
+  门槛一个量级），未触发任何优化/收窄动作——按任务约束本任务不做性能优化。
+  计数口径注意：`elements=543` 含 1 个 System 与全部 Container（§6.3 的 Component
+  集已剔除 main 包类型，与 PoC-3 探针的 `exportedTypes=519` 口径不同，不能直接
+  互减得出 Component 数）；`relationships=2414` 含去重后 Weight 合并的
+  contains/depends_on/calls 三类边各 1 行，落在 §6.4 "1000~2000 条边"量级预期
+  的邻域（略高，仍远未触及 800 节点预筛分支）。单次样本，波动未知，如实记录。
+
 ## PoC-4 flow 在 600 节点下的帧时间与稳定性
 
 - 结论：**PASS**（门槛两半都实测成立，非"能渲染"级别）。

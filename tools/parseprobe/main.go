@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/futuremeng/OpenArchitect/internal/scanner/language"
 )
 
 // packagesNeedAll is a local copy of the LoadMode the scanner uses. The
@@ -30,7 +32,26 @@ const packagesNeedAll = packages.NeedName | packages.NeedFiles | packages.NeedSy
 
 func main() {
 	root := flag.String("root", ".", "repository root holding go.mod")
+	parseMode := flag.Bool("parse", false,
+		"time language.Parse end-to-end (load + elements + the Task 10 edge pass) and print element/edge counts")
 	flag.Parse()
+
+	if *parseMode {
+		adapter, ok := language.Get("go")
+		if !ok {
+			log.Fatal("parseprobe: go adapter not registered")
+		}
+		start := time.Now()
+		out, err := adapter.Parse(context.Background(), *root)
+		elapsed := time.Since(start)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("parse: root=%s module=%s elements=%d relationships=%d packageErrors=%d elapsed=%s\n",
+			*root, out.ModulePath, len(out.Elements), len(out.Relationships),
+			len(out.PackageErrors), elapsed.Round(time.Millisecond))
+		return
+	}
 
 	var before, after runtime.MemStats
 	runtime.GC()

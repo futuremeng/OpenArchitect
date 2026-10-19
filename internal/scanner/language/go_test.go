@@ -2,6 +2,7 @@ package language
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -116,7 +117,13 @@ func TestSystemElementDescribesTheModule(t *testing.T) {
 func TestSharedLibContainment(t *testing.T) {
 	out := parseFixture(t, "shared-lib")
 	// 只有 cmd/app 一个 main：core 与 edge 都挂它，循环依赖不能引起死循环。
-	want := []string{"cmp:example.com/shared/core.Server", "cmp:example.com/shared/edge.Client", "ctn:example.com/shared/cmd/app", "sys:example.com/shared"}
+	want := []string{
+		"cmp:example.com/shared/core.Ledger",
+		"cmp:example.com/shared/core.Server",
+		"cmp:example.com/shared/edge.Client",
+		"ctn:example.com/shared/cmd/app",
+		"sys:example.com/shared",
+	}
 	if got := idsOf(out.Elements); !slices.Equal(got, want) {
 		t.Fatalf("elements =\n%v\nwant\n%v", got, want)
 	}
@@ -128,6 +135,7 @@ func TestSharedLibContainment(t *testing.T) {
 	}
 	slices.Sort(contains)
 	wantContains := []string{
+		"ctn:example.com/shared/cmd/app -> cmp:example.com/shared/core.Ledger",
 		"ctn:example.com/shared/cmd/app -> cmp:example.com/shared/core.Server",
 		"ctn:example.com/shared/cmd/app -> cmp:example.com/shared/edge.Client",
 		"sys:example.com/shared -> ctn:example.com/shared/cmd/app",
@@ -212,5 +220,55 @@ func TestDetect(t *testing.T) {
 	// parser treats `{` as the start of the if body.
 	if _, err := (goAdapter{}).Detect("/definitely/not/here"); err == nil {
 		t.Fatal("unreadable root must return an error")
+	}
+}
+
+func TestSharedLibDependencyEdges(t *testing.T) {
+	out := parseFixture(t, "shared-lib")
+	var got []string
+	for _, r := range out.Relationships {
+		if r.Type == model.RelContains {
+			continue
+		}
+		got = append(got, fmt.Sprintf("%s -%s(%d)-> %s", r.FromID, r.Type, r.Weight, r.ToID))
+	}
+	slices.Sort(got)
+	want := []string{
+		"cmp:example.com/shared/core.Ledger -calls(2)-> cmp:example.com/shared/core.Server",
+		"cmp:example.com/shared/core.Ledger -depends_on(1)-> cmp:example.com/shared/core.Server",
+		"cmp:example.com/shared/edge.Client -calls(1)-> cmp:example.com/shared/core.Server",
+		"cmp:example.com/shared/edge.Client -depends_on(1)-> cmp:example.com/shared/core.Server",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("edges =\n%v\nwant\n%v", got, want)
+	}
+}
+
+func TestNoEdgesFromMainPackageFiles(t *testing.T) {
+	// cmd/api 的 main() 调用 store.Cart 的方法，但 main 包不产 Component，
+	// 于是这些调用没有边的主语（spec §6.4）。
+	out := parseFixture(t, "simple-multi-main")
+	for _, r := range out.Relationships {
+		if r.Type != model.RelContains {
+			t.Fatalf("unexpected edge from a main package: %+v", r)
+		}
+	}
+}
+
+func TestPackageFunctionCallProducesNoEdge(t *testing.T) {
+	// core.Server.Addr 调 edge.Version：包函数不是 Component，不该出现
+	// 指向 "…edge.Version" 这类不存在的元素的边。
+	out := parseFixture(t, "shared-lib")
+	known := map[string]bool{}
+	for _, e := range out.Elements {
+		known[e.ID] = true
+	}
+	for _, r := range out.Relationships {
+		if !known[r.FromID] || !known[r.ToID] {
+			t.Fatalf("dangling edge %+v", r)
+		}
+		if strings.Contains(r.ToID, "Version") {
+			t.Fatalf("package function became a call target: %+v", r)
+		}
 	}
 }
