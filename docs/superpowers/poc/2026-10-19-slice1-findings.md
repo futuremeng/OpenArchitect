@@ -102,3 +102,69 @@
   6. PoC-2 门槛的两半（Go test 无 cgo 打开真库 + app 上下文里
      `LibraryPath()` 找库）都已实测通过；Task 24 提到的"PoC-2 剩下的一半"
      若指打包形态（IsPackaged）下的库路径，仍留给 Task 24 验。
+
+## PoC-3 go/packages 规模探针（定 U2 的 LoadMode）
+
+- 结论：**PASS**，且 **Task 9 保留 `NeedDeps`**（`packagesNeedAll` =
+  `NeedName|NeedFiles|NeedSyntax|NeedTypes|NeedTypesInfo|NeedDeps|NeedModule`
+  整串照抄进 `internal/scanner/language/go.go`）。门槛"真实仓库解析 ≤ 60 s
+  且峰值 ≤ 2 GB"在两个仓库、两种模式下全部通过：最差单次 elapsed 25.4 s
+  （onevra、无 NeedDeps、该模式冷启动首跑），全程最大 sys 887.8 MB、最大
+  HeapAlloc 672.3 MB，离门槛一个数量级。保留 NeedDeps 的实测依据：
+  (a) 它对稳态耗时的代价只有约 3~7 s（mygo 1.7→7.3 s、onevra 0.9~7.0→5~8 s），
+  内存代价约 +350~550 MB HeapAlloc（mygo ~275→672 MB、onevra ~84→632~672 MB），
+  均在门槛内；(b) §6.4 的 `depends_on`/`calls` 边要求跨包类型对象同一性
+  （`types.Info.Uses` 解析到别的包的 `*types.TypeName`），brief 自己的判断
+  （"NeedTypes 在类型检查跨包时基本必须依赖它"）与实测一致——去掉 NeedDeps
+  后本包导出类型计数不变，但那只证明"数数"不受影响，边生成需要依赖类型完整
+  加载，不值得为省内存赌在 Task 10 的正确性上；(c) 模式切换本身会让 `go list`
+  按新驱动参数重跑，去掉 NeedDeps 的首跑反而最慢（25.4 s / 24.8 s），
+  "收窄即加速"的预期在真实缓存行为下不成立。
+- 数字（探针 `go run ./tools/parseprobe -root <路径>`，GOFLAGS 默认、
+  GOPROXY=goproxy.cn；"冷"= 该模式首跑，"热"= 缓存就绪后的复跑，热跑取 2~3 次）：
+  - 仓库 A：`/Users/futuremeng/go/pkg/mod/github.com/oneo-me/onevra/source@v0.2026.12`
+    （6.8 MB 模块目录，29 个自身包，packageErrors=0，**exportedTypes=138**）。
+    - 全串（含 NeedDeps）：冷 elapsed=7.54s heapAllocMB=644.5 sysMB=745.0；
+      热 5.15s/631.9/753.5、8.24s/593.0/757.3。
+    - 去 NeedDeps：冷 elapsed=25.39s heapAllocMB=93.8 sysMB=117.4；
+      热 0.89s/88.7/113.4、7.04s/83.5/105.3。
+    - NeedDeps 开↔关（热稳态）：耗时 +4~8 s 量级（存在 ±4 s 运行间波动），
+      HeapAlloc +约 500~550 MB，sys +约 640 MB。
+  - 仓库 B（更大的仓库）：`/Users/futuremeng/go/pkg/mod/github.com/egoist/mygo@v0.5.5`
+    （19 MB 模块目录，108 个自身包，**exportedTypes=519**）。
+    - 全串（含 NeedDeps）：首跑（3 个包 audio/mp3、audio/vorbis、ui/richtext 因
+      GOPROXY=off 拉不到 go-mp3/oggvorbis/x/net 而记 packageErrors=3）
+      elapsed=5.57s heapAllocMB=656.3 sysMB=887.8；依赖补齐后 packageErrors=0，
+      该模式冷 18.27s/638.4/867.0，热 8.80s/647.4/851.2、7.26s/672.3/875.4。
+    - 去 NeedDeps（依赖已补齐）：冷 elapsed=4.94s heapAllocMB=284.5 sysMB=317.4；
+      热 1.71s/275.4/308.6。
+    - NeedDeps 开↔关（热稳态）：耗时 +5~6 s（mygo 1.7→7.3 s），
+      HeapAlloc +约 360~400 MB，sys +约 560 MB。
+  - 计数口径注意：探针按 brief 的 `componentOf` 数的是**自身包全部导出
+    named struct/interface 类型**，未扣 main 包类型与 `_test.go`（§6.3 的
+    Component 排除集会略低于此数），即 519/138 是 Component 数的上界。
+    两模式下 exportedTypes 计数完全一致（138/519），说明本包枚举不依赖
+    NeedDeps——这是探针口径的实测，不是边质量的实测。
+  - 内存口径注意：heapAllocMB 是 `packages.Load` 返回后的即时存活堆、sysMB 是
+    运行时保留量，均为 brief 探针的固定输出；两者任意一次读数都远低于 2 GB，
+    且 sys ≥ 堆峰值的一般性成立使"峰值 ≤ 2 GB"结论稳健。
+- 影响：
+  1. U2 关闭：Task 9 的 `internal/scanner/language/go.go` 直接复用
+     `tools/parseprobe/main.go` 里的 `packagesNeedAll` 整串位（含 NeedDeps），
+     不需要 §12 PoC-3 失败分支里的"包级预筛 / NeedDeps 收窄"。
+  2. spec §6.4 规模预期获实证支持并回填：mygo 模块（108 包，中等偏大）
+     519 个导出类型落在"200~600 Component"区间内；onevra source
+     （29 包，中小）138 个、落在区间下沿之外——说明该区间大致对应
+     "百包级"仓库，包数更少的仓库 Component 会更少，§9 性能约束按
+     600 上界设计仍安全。
+  3. 探针保留在 `tools/parseprobe/`，每次映射规则调整复测；新增依赖
+     `golang.org/x/tools v0.52.0`（具体 pin，进 `go.mod`/`go.sum`；
+     `go mod tidy` 顺带带入 `golang.org/x/mod v0.42.0`、`golang.org/x/sync v0.24.0`
+     等间接项，业务 pin mygo/onevra 零漂移）。
+  4. 对 Task 9 的性能预算参考：`packages.Load("./...")` 的 5~9 s 是
+     go list 子进程 + 类型检查的合计墙钟，桌面端扫描必须异步化（§10 的
+     取消/进度链路），不能放主线程；运行间波动 ±4 s 属环境噪声，
+     门槛余量足够大不影响结论。
+  5. 本机没有比 mygo 更大的现成 Go 仓库可用（`~/github` 下各 checkout 均无
+     `go.mod`），按 brief 的 fallback 用 mygo 模块目录充当第二仓库；
+     300~600 导出类型档由 mygo=519 覆盖。
