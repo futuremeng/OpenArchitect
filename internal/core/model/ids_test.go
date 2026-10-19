@@ -11,7 +11,7 @@ func TestIDRules(t *testing.T) {
 		{SystemID(mod), "sys:example.com/cart"},
 		{ContainerID(mod + "/cmd/api"), "ctn:example.com/cart/cmd/api"},
 		{ComponentID(mod+"/internal/basket", "Basket"), "cmp:example.com/cart/internal/basket.Basket"},
-		// 泛型类型只用声明名，丢弃参数：一个类型一个节点（spec §6.2）。
+		// 泛型类型按调用方传入的裸声明名建 id：一个类型一个节点（spec §6.2）。
 		{ComponentID(mod+"/pkg", "Box"), "cmp:example.com/cart/pkg.Box"},
 	}
 	for _, tc := range cases {
