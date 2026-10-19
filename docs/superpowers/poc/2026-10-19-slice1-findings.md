@@ -288,10 +288,12 @@
   - `benchtime 1x`（新库只写 1 个快照，共 4 次跑次）：
     16.5 ms / 16.9 ms / 14.7 ms / 28.3 ms，中位 ≈16.7 ms；其中首个带
     `-benchmem` 的 1x 跑次记得 2,155,544 B/op、61,626 allocs/op。
-  - `benchtime 20x`（同一库连写 20 个快照、累计 ≈42,420 条子行，共 3 次
+  - `benchtime 20x`（同一库连写 20 个快照、累计 42,400 条子行
+    （20 ×（620 元素 + 1500 关系），20 条快照父行不计入子行），共 3 次
     跑次）：均值 23.2 ms/op / 26.5 ms/op / 41.8 ms/op（库增长带来的
     索引维护计入其中）。
-  - 失败次数：0。全部 7 个 bench 跑次合计 26 次单事务 2121 语句写，
+  - 失败次数：0。全部 7 个 bench 跑次合计 64 次单事务 2121 语句写
+    （4 次 1x 跑次 ×1 + 3 次 20x 跑次 ×20），
     `b.Fatal` 未触发、每次 COMMIT 成功、跑次全 PASS。
   - 原子性（单测，非基准）：`TestSaveSnapshotRollsBackCompletely` PASS——
     第 1 条语句违反 `architecture_snapshots.repo_id` 外键即整批回滚，

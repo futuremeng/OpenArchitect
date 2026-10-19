@@ -19,8 +19,10 @@ const (
 		WHERE snapshot_id = ? ORDER BY element_id`
 	selectElementByID = `SELECT ` + elementColumns + ` FROM arch_elements
 		WHERE snapshot_id = ? AND element_id = ?`
+	// `, element_id` 是并列名的 tie-breaker：620 组件下同名可撞 LIMIT 边界，
+	// 没有它「哪 50 行返回」不确定，Task 20 的命令面板与 golden 比对会 flake。
 	selectElementSearch = `SELECT ` + elementColumns + ` FROM arch_elements
-		WHERE snapshot_id = ? AND name LIKE ? ESCAPE '\' ORDER BY name LIMIT ?`
+		WHERE snapshot_id = ? AND name LIKE ? ESCAPE '\' ORDER BY name, element_id LIMIT ?`
 )
 
 // maxSearchResults 是命令面板的取回上限（Task 20 的输入不做本地二次截断）。

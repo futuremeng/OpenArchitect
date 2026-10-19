@@ -158,6 +158,39 @@ func TestSaveSnapshotRollsBackCompletely(t *testing.T) {
 	}
 }
 
+// TestSaveSnapshotRollsBackAfterChildRows 才是 spec §7.2 W2「全成或全滚，
+// 不留半成品快照」的正题：失败语句被安排在孩子行已写进去之后——两条
+// (from_id, to_id, relationship_type) 完全相同的关系在 `arch_relationships`
+// 的复合主键上冲突。语句序号：1 快照父行、2~3 元素子行、4~5 关系子行均
+// 成功，第 6 条才失败。因此「遇到错误就停但不回滚」的实现会留下 5 行
+// 半成品，本测试必红；而上面的外键测试第 1 条即失败，查不出这种实现。
+func TestSaveSnapshotRollsBackAfterChildRows(t *testing.T) {
+	db := newTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := repoFixture()
+	if err := db.UpsertRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	dup := model.Relationship{
+		FromID: "cmp:example.com/x/internal/basket.Basket",
+		ToID:   model.SystemID("example.com/x"), Type: model.RelCalls, Weight: 5}
+	rels := append(relsFixture(), dup) // relsFixture 的第二条与 dup 主键相同
+	err := db.SaveSnapshot(ctx, snapshotFixture(repo), elementsFixture(repo), rels)
+	if err == nil {
+		t.Fatal("expected composite primary key violation on the duplicate relationship")
+	}
+	for _, table := range []string{"architecture_snapshots", "arch_elements", "arch_relationships"} {
+		rows, qerr := db.Query(ctx, `SELECT count(*) FROM `+table)
+		if qerr != nil {
+			t.Fatalf("%s: %v", table, qerr)
+		}
+		if got := num(rows.Values[0][0]); got != 0 {
+			t.Fatalf("%s survived mid-transaction rollback: %v rows", table, got)
+		}
+	}
+}
+
 func TestUpsertRepoIsIdempotentAndUpdatesName(t *testing.T) {
 	db := newTestDB(t)
 	defer db.Close()
@@ -196,15 +229,20 @@ func TestSearchElementsEscapesWildcards(t *testing.T) {
 	if err := db.UpsertRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
+	// Bask9x 与 10000 是「变异检验锚点」：它们只有在不转义时才会被通配符吃掉。
+	// `%Bask_x%`（`_` 当通配）命中 Bask9x，`%100%%`（`%` 当通配）命中 10000；
+	// 转义后二者都落空。若 `escapeLike` 退化成恒等函数，下面两个断言必红。
 	elements := []model.Element{
 		{ID: "cmp:a.Basket", Type: model.TypeComponent, Name: "Basket", RepoID: repo.ID},
 		{ID: "cmp:a.Bask_x", Type: model.TypeComponent, Name: "Bask_x", RepoID: repo.ID},
+		{ID: "cmp:a.Bask9x", Type: model.TypeComponent, Name: "Bask9x", RepoID: repo.ID},
 		{ID: "cmp:a.Percent", Type: model.TypeComponent, Name: "100%", RepoID: repo.ID},
+		{ID: "cmp:a.Thousand", Type: model.TypeComponent, Name: "10000", RepoID: repo.ID},
 	}
 	if err := db.SaveSnapshot(ctx, snapshotFixture(repo), elements, nil); err != nil {
 		t.Fatal(err)
 	}
-	// "_" 是 LIKE 单字符通配：不转义的话 "Bask_x" 会连 Basket 一起命中。
+	// "_" 是 LIKE 单字符通配：不转义的话 "Bask_x" 会连 Bask9x 一起命中。
 	got, err := db.SearchElements(ctx, snapshotFixture(repo).ID, "Bask_x")
 	if err != nil {
 		t.Fatal(err)
@@ -212,11 +250,12 @@ func TestSearchElementsEscapesWildcards(t *testing.T) {
 	if len(got) != 1 || got[0].Name != "Bask_x" {
 		t.Fatalf("underscore leaked: %+v", got)
 	}
+	// "%" 是 LIKE 多字符通配：不转义的话 "100%" 会连 10000 一起命中。
 	got, err = db.SearchElements(ctx, snapshotFixture(repo).ID, "100%")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 {
+	if len(got) != 1 || got[0].Name != "100%" {
 		t.Fatalf("percent literal: %+v", got)
 	}
 }
