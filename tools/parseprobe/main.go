@@ -17,9 +17,16 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// packagesNeedAll is the LoadMode the scanner will use; PoC-3 picks the bits.
+// packagesNeedAll is a local copy of the LoadMode the scanner uses. The
+// canonical copy lives in internal/scanner/language/go.go and the two must stay
+// in sync; this file keeps its own because it must stay runnable as the
+// measurement harness. PoC-3 picked the bits; Task 9 added NeedImports, because
+// the containment walk reads pkg.Imports, which the driver otherwise clears even
+// though impliedLoadMode already builds the graph for
+// NeedDeps/NeedTypes/NeedTypesInfo.
 const packagesNeedAll = packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-	packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps | packages.NeedModule
+	packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedDeps |
+	packages.NeedModule
 
 func main() {
 	root := flag.String("root", ".", "repository root holding go.mod")
