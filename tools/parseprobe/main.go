@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
+	"github.com/futuremeng/OpenArchitect/internal/core/model"
 	"github.com/futuremeng/OpenArchitect/internal/scanner/language"
 )
 
@@ -50,6 +51,35 @@ func main() {
 		fmt.Printf("parse: root=%s module=%s elements=%d relationships=%d packageErrors=%d elapsed=%s\n",
 			*root, out.ModulePath, len(out.Elements), len(out.Relationships),
 			len(out.PackageErrors), elapsed.Round(time.Millisecond))
+		var systems, containers, components int
+		for _, e := range out.Elements {
+			switch e.Type {
+			case model.TypeSystem:
+				systems++
+			case model.TypeContainer:
+				containers++
+			case model.TypeComponent:
+				components++
+			}
+		}
+		fmt.Printf("parse: byType System=%d Container=%d Component=%d\n", systems, containers, components)
+		// The PoC-3 headline number (519 for mygo) counts every exported named
+		// struct/interface in the module's own packages. On this toolchain that
+		// predicate already refuses a materialised *types.Alias, so aliases sit
+		// outside both the headline and the adapter's Component set; the one
+		// thing the Component set drops from the headline is the main-package
+		// declarations (§6.3). Hence Component == exported - mainPkgTypes, and
+		// elements == System + Container + Component. This is a second
+		// packages.Load inside the same command, not a reuse of Parse's.
+		exported, mainTypes, aliases, err := countPoC3Scope(*root)
+		if err != nil {
+			log.Fatal(err)
+		}
+		expected := systems + containers + (exported - mainTypes)
+		fmt.Printf("parse: reconcile System=%d + Container=%d + (exported=%d - mainPkgTypes=%d)"+
+			" = %d vs elements=%d match=%v (aliases=%d excluded from both counts)\n",
+			systems, containers, exported, mainTypes, expected, len(out.Elements),
+			expected == len(out.Elements), aliases)
 		return
 	}
 
@@ -134,4 +164,50 @@ func componentOf(obj types.Object) (*types.Named, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// countPoC3Scope re-measures the exportedTypes headline of PoC-3 with the same
+// predicate as the load-only path above, and splits it by the two things the
+// adapter's Component rule is documented to drop: declarations in main packages
+// (§6.3) and type aliases. Aliases are counted separately with types.Unalias
+// precisely because the load-only predicate cannot cast a materialised
+// *types.Alias to *types.Named: the headline already excludes them, so the
+// split shows which of the two exclusions is additive against the headline and
+// which is already netted out.
+func countPoC3Scope(root string) (exported, mainPkg, aliases int, err error) {
+	modPath, pkgs, err := load(root)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	for _, pkg := range pkgs {
+		if pkg.Module == nil || pkg.Types == nil || !own(modPath, pkg.PkgPath) {
+			continue
+		}
+		scope := pkg.Types.Scope()
+		for _, name := range scope.Names() {
+			tn, ok := scope.Lookup(name).(*types.TypeName)
+			if !ok || !tn.Exported() {
+				continue
+			}
+			if tn.IsAlias() {
+				named, ok := types.Unalias(tn.Type()).(*types.Named)
+				if !ok {
+					continue
+				}
+				switch named.Underlying().(type) {
+				case *types.Struct, *types.Interface:
+					aliases++
+				}
+				continue
+			}
+			if _, ok := componentOf(tn); !ok {
+				continue
+			}
+			exported++
+			if pkg.Name == "main" {
+				mainPkg++
+			}
+		}
+	}
+	return exported, mainPkg, aliases, nil
 }

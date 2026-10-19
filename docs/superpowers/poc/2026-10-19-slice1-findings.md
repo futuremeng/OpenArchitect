@@ -223,6 +223,36 @@
   contains/depends_on/calls 三类边各 1 行，落在 §6.4 "1000~2000 条边"量级预期
   的邻域（略高，仍远未触及 800 节点预筛分支）。单次样本，波动未知，如实记录。
 
+### PoC-3 补记（Task 11）：`elements=543` 的按类型分解与对账
+
+- 动机：上一节那句「`elements=543` 含 1 个 System 与全部 Container，与
+  `exportedTypes=519` 口径不同，不能直接互减」只是说得通，没有把 543 拆开。
+  本节把分解与对账补成实测（progress ledger 给 Task 11 的第 2 条承接项）。
+- 命令（单次，2026-10-19；root 与上一节同一条，环境同：GOFLAGS 默认、
+  GOPROXY=goproxy.cn、`CGO_ENABLED=0`）：
+  `go run ./tools/parseprobe -parse -root /Users/futuremeng/go/pkg/mod/github.com/egoist/mygo@v0.5.5`
+  （`-parse` 模式在本任务补两行输出：按 `model.ElementType` 的计数，以及一行
+  对账。对账用的 `exported / mainPkgTypes / aliases` 三个数来自**同一条命令里的
+  第二次 `packages.Load`**（`countPoC3Scope`），不是复用 `Parse` 的加载结果；
+  所以这一行的 elapsed 与上一节的单链路耗时不同口径，不作耗时结论用。）
+- 输出（逐字三行）：
+  - `parse: root=/Users/futuremeng/go/pkg/mod/github.com/egoist/mygo@v0.5.5 module=github.com/egoist/mygo elements=543 relationships=2414 packageErrors=0 elapsed=2.258s`
+  - `parse: byType System=1 Container=40 Component=502`
+  - `parse: reconcile System=1 + Container=40 + (exported=519 - mainPkgTypes=17) = 543 vs elements=543 match=true (aliases=8 excluded from both counts)`
+- 对账结论：**残差 0，543 被完全拆开**——`1` 个 System + `40` 个 Container
+  （即该模块里 40 个 `package main`）+ `502` 个 Component，其中
+  `502 = 519 − 17`：从 PoC-3 的 `exportedTypes=519` 里减掉 17 个「main 包内导出
+  named struct/interface 类型」（§6.3 的"main 包内类型不进图"）。`elements=543`
+  与 `exportedTypes=519` 两个数都与上方记录逐字一致，本次重跑未见漂移。
+- 口径修正（对计划给的式子）：计划/ledger 写的对账式是
+  `519 − main 包类型 − 别名 + containers + 1 = 543`，实测**多减了「别名」一项**：
+  go1.27.2 的 `go/types` 实体化 `*types.Alias`，PoC-3 探针的 `componentOf` 谓词
+  （`tn.Type().(*types.Named)` 断言）本就把别名挡在 519 之外，而适配器
+  `exportedComponentTypes` 的 `named.Obj() != tn` 守卫把同一批名字挡在 Component
+  之外——别名（本次实测 8 个）**两侧都不在账上**，不参与减法。照计划的式子算得
+  `1 + 40 + 519 − 17 − 8 = 535 ≠ 543`，残差恰为那 8 个别名；按修正后的式子
+  `match=true`。这一条只改口径说明，不改任何映射规则。
+
 ## PoC-4 flow 在 600 节点下的帧时间与稳定性
 
 - 结论：**PASS**（门槛两半都实测成立，非"能渲染"级别）。

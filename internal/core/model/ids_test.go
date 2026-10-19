@@ -3,6 +3,7 @@ package model
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestIDRules(t *testing.T) {
@@ -71,5 +72,17 @@ func TestPkgPathOf(t *testing.T) {
 	}
 	if got := PkgPathOf(SystemID(mod)); got != "" {
 		t.Fatalf("sys must have no package: got %q", got)
+	}
+}
+
+func TestSnapshotIDsSortByTime(t *testing.T) {
+	first := NewSnapshotID()
+	time.Sleep(time.Millisecond)
+	second := NewSnapshotID()
+	if first >= second {
+		t.Fatalf("ids must sort by time: %q then %q", first, second)
+	}
+	if len(first) != 20 || first[0] != 's' {
+		t.Fatalf("id = %q, want s + 19 digits", first)
 	}
 }
