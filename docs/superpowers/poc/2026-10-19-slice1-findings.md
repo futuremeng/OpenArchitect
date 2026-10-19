@@ -199,22 +199,23 @@
   - 600 节点 · 最终批 3 次（代码与入库一致）：
     - run1：整帧 median=4.10 p95=5.40；功 median=3.50 p95=4.70 max=5.40；
       探针自测 flow.View median=940µs、首帧 2.868ms；>16ms 帧 1 个
-      （f40=18.7，present=15.6，skip@f41）；冷启动首帧（含字体图集/首建树）
+      （f40=18.7，present=15.6，no GC，skip@f41）；冷启动首帧（含字体图集/首建树）
       f1=49.3ms；zoom=0.1000；liveDrift f8→f38 maxAbsDelta=0.000000；
       headless 双 Advance 前后 maxAbsDelta=0.000000；labelsFound=600/600。
     - run2：4.10→中位 3.90 p95=4.80；功 median=3.40 p95=4.20 max=5.50；
       flow.View median=900µs、首帧 2.144ms；>16ms：f80=18.0（present=14.4，
-      skip@f81）；冷 f1=44.7ms；zoom=0.1000；漂移同上全 0。
+      no GC，skip@f81）；冷 f1=44.7ms；zoom=0.1000；漂移同上全 0。
     - run3：整帧 median=4.10 p95=5.70；功 median=3.50 p95=4.90 max=6.60；
       flow.View median=914µs、首帧 2.436ms；>16ms：f77=18.4（present=13.9，
-      skip@f78）；冷 f1=38.8ms；zoom=0.1000；漂移同上全 0。
+      no GC，skip@f78）；冷 f1=38.8ms；zoom=0.1000；漂移同上全 0。
   - 300 节点 · 1 次（最终批）：整帧 median=2.30 p95=5.30；功 median=1.90
     p95=4.70 max=5.20；flow.View median=490µs、首帧 1.854ms；>16ms：
-    f86=19.2（present=15.0，skip@f87）；冷 f1=32.7ms；zoom=0.1348；
+    f86=19.2（present=15.0，no GC，skip@f87）；冷 f1=32.7ms；zoom=0.1348；
     漂移全 0（300/300 比较）；labelsFound=300/300。
   - 50 节点 · 1 次（最终批）：整帧 median=0.60 p95=2.00；功 median=0.40
     p95=1.50 max=3.00；flow.View median=117µs、首帧 214µs；>16ms：
-    2 个（f7=18.4 present=18.1 skip@f8；f96=18.2 present=16.6 skip@f97）；
+    2 个（f7=18.4 present=18.1 no GC skip@f8；f96=18.2 present=16.6 no GC
+    skip@f97）；
     冷 f1=15.6ms；zoom=0.8564；漂移全 0；labelsFound=50/50。
   - 首批复跑（输出行差异、驱动路径相同的早期版本探针）：600 节点 7 次
     整帧 median=3.80/3.90/4.10/3.80/4.00/4.20/5.10ms，其中 4 次各有

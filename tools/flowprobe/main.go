@@ -53,6 +53,7 @@ func main() {
 	var snapshot map[string][2]float32
 	frame, readyAt := 0, 0
 	finished := false
+	exitCode := 0
 
 	view := func(c *ui.Context) {
 		frame++
@@ -71,10 +72,11 @@ func main() {
 				snapshot = positions(&state, data)
 				fmt.Printf("snapshot frame=%d nodes=%d zoom=%.4f\n", frame, len(snapshot), state.Zoom())
 			case readyAt + driftOffset:
-				maxAbs, sq, ok := drift(snapshot, positions(&state, data), sampleID)
+				after := positions(&state, data)
+				maxAbs, sq, ok := drift(snapshot, after, sampleID, len(data.Nodes))
 				fmt.Printf("stable=%v drift=%v\n", ok, sq) // brief Step-3 print, node p0.T0
-				fmt.Printf("liveDrift frames=%d..%d nodesCompared=%d maxAbsDelta=%.6f sampleSquaredDelta=%.6f\n",
-					readyAt+snapshotOffset, frame, len(data.Nodes), maxAbs, sq)
+				fmt.Printf("liveDrift frames=%d..%d nodesExpected=%d nodesCompared=%d maxAbsDelta=%.6f sampleSquaredDelta=%.6f\n",
+					readyAt+snapshotOffset, frame, len(data.Nodes), len(after), maxAbs, sq)
 			}
 		}
 		target := *frames
@@ -85,7 +87,7 @@ func main() {
 			c.AnimationFrame() // ask for the next real, vsync-paced frame
 		} else if !finished {
 			finished = true
-			printSummary(*nodes, timings, readyAt, *frames)
+			exitCode = printSummary(*nodes, timings, readyAt, *frames)
 			time.AfterFunc(0, mygo.App.Quit)
 		}
 	}
@@ -110,6 +112,10 @@ func main() {
 		log.Fatal(err)
 	}
 	watchdog.Stop()
+	if exitCode != 0 {
+		// NOT-READY live pass: quit normally, but signal failure onward.
+		os.Exit(exitCode)
+	}
 }
 
 func flowOptions(data flow.Data) flow.Options {
@@ -137,7 +143,8 @@ func headlessDriftCheck(data flow.Data) {
 	}
 	if !state.Ready() {
 		fmt.Printf("headlessDrift: NOT READY after %d advances\n", builds)
-		return
+		// A measurement-less run must not look clean to a scripted caller.
+		os.Exit(2)
 	}
 	before := positions(&state, data)
 	found := 0
@@ -147,11 +154,11 @@ func headlessDriftCheck(data flow.Data) {
 		}
 	}
 	tt.Advance(500 * time.Millisecond) // Advance #1
-	max1, sq1, ok1 := drift(before, positions(&state, data), sampleID)
+	max1, sq1, ok1 := drift(before, positions(&state, data), sampleID, len(data.Nodes))
 	tt.Advance(500 * time.Millisecond) // Advance #2
-	max2, sq2, ok2 := drift(before, positions(&state, data), sampleID)
-	fmt.Printf("headlessDrift builds=%d ready=true labelsFound=%d/%d afterAdvance1 maxAbsDelta=%.6f sampleSquaredDelta=%.6f stable=%v; afterAdvance2 maxAbsDelta=%.6f sampleSquaredDelta=%.6f stable=%v\n",
-		builds, found, len(data.Nodes), max1, sq1, ok1, max2, sq2, ok2)
+	max2, sq2, ok2 := drift(before, positions(&state, data), sampleID, len(data.Nodes))
+	fmt.Printf("headlessDrift builds=%d ready=true labelsFound=%d/%d afterAdvance1 maxAbsDelta=%.6f sampleSquaredDelta=%.6f stable=%v nodes=%d/%d; afterAdvance2 maxAbsDelta=%.6f sampleSquaredDelta=%.6f stable=%v\n",
+		builds, found, len(data.Nodes), max1, sq1, ok1, len(before), len(data.Nodes), max2, sq2, ok2)
 }
 
 func positions(state *flow.State, data flow.Data) map[string][2]float32 {
@@ -165,10 +172,12 @@ func positions(state *flow.State, data flow.Data) map[string][2]float32 {
 }
 
 // drift reports the largest absolute per-axis delta over all nodes and the
-// squared delta of the sample node; ok is false if any node is missing from
-// one of the snapshots.
-func drift(before, after map[string][2]float32, sample string) (maxAbs, sampleSq float64, ok bool) {
-	ok = len(before) == len(after) && len(before) > 0
+// squared delta of the sample node; ok is false if either snapshot is not
+// exactly the expected node count (positions() silently drops nodes whose
+// Position is unavailable, so comparing the two snapshots against each other
+// would under-count) or any node is missing from one of them.
+func drift(before, after map[string][2]float32, sample string, want int) (maxAbs, sampleSq float64, ok bool) {
+	ok = len(before) == want && len(after) == want && want > 0
 	for id, p := range before {
 		q, found := after[id]
 		if !found {
@@ -184,17 +193,20 @@ func drift(before, after map[string][2]float32, sample string) (maxAbs, sampleSq
 	return maxAbs, sampleSq, ok
 }
 
-func printSummary(n int, timings []time.Duration, readyAt, framesFlag int) {
+// printSummary returns the process exit code: nonzero when the run measured
+// nothing, so a scripted re-run cannot mistake a NOT-READY pass for a clean one.
+func printSummary(n int, timings []time.Duration, readyAt, framesFlag int) int {
 	fmt.Printf("first frame: %v\n", timings[0].Round(time.Microsecond))
 	if readyAt == 0 || readyAt >= len(timings) {
 		fmt.Printf("SUMMARY nodes=%d frames=%d readyAt=%d NOT-READY, all %d frames median=%v max=%v\n",
 			n, len(timings), readyAt, len(timings), median(timings), maxD(timings))
-		return
+		return 2
 	}
 	steady := timings[readyAt:] // every frame strictly after the ready one
 	fmt.Printf("SUMMARY nodes=%d frames=%d readyAt=%d steadyFrames=%d steadyMedian=%v steadyP95=%v steadyMax=%v\n",
 		n, len(timings), readyAt, len(steady),
 		median(steady), percentile(steady, 0.95), maxD(steady))
+	return 0
 }
 
 func median(d []time.Duration) time.Duration { return percentile(d, 0.5) }
