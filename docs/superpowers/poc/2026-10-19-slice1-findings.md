@@ -170,3 +170,95 @@
   5. 本机没有比 mygo 更大的现成 Go 仓库可用（`~/github` 下各 checkout 均无
      `go.mod`），按 brief 的 fallback 用 mygo 模块目录充当第二仓库；
      300~600 导出类型档由 mygo=519 覆盖。
+
+## PoC-4 flow 在 600 节点下的帧时间与稳定性
+
+- 结论：**PASS**（门槛两半都实测成立，非"能渲染"级别）。
+  600 节点稳定态整帧 took 中位数 3.90~4.10 ms/帧（3 次复跑全列于"数字"，
+  另加首批 7 次复跑 3.80~5.10 ms 佐证），远低于 16 ms；其中真正由渲染
+  负担决定的"功"（build+layout+paint+other，不含等屏的 present 阻塞）
+  中位 3.40~3.50 ms、全场最差单帧 6.60 ms。漂移：headless `tt.Advance`
+  ×2（间隔 500 ms）后与实窗 30 个真实帧后，全部 600 个节点
+  `Position` maxAbsDelta = 0.000000（50/300/600 各档同为 0）。
+  **Task 18/19 可照 spec §9.3 直接用 `flow`，无需切逃生通道。**
+  两条如实附注：(a) 各档都存在零星 18.0~19.2 ms 单帧，但全部由
+  present 相位（13.9~18.1 ms，等显示同步）主导、同帧"功"≤5.3 ms 且
+  "no GC"、且每帧紧随其后都有引擎自报的 `skipped to catch up with the
+  display` 帧，50 节点档同样出现（2/117 帧）——判定为系统 vsync 调度
+  毛刺而非 flow 渲染能力（数字逐帧列于"数字"）；(b) 可读性量化信号：
+  600 节点 fit 后 zoom=0.1000，恰为 flow 的 minZoom 下限
+  （`render.go:20`），即 600 节点"整图 fit"在 1400×900 里已超出可读
+  缩放（像素级目测本会话不可得，与 PoC-1 同因；见"影响"第 3 条）。
+- 数字（探针 `go run ./tools/flowprobe -nodes N -frames 120`，
+  环境变量 `MYGO_FRAME_STATS=all` 逐帧记录引擎整帧；窗口 1400×900；
+  "整帧 took"= 引擎 frame 全程 build+layout+paint+present；
+  "功"= build+layout+paint+other，即扣除等待显示的 present；
+  稳定态 = 剔除 readyAt 之前的帧，每档 readyAt=3、稳定态 117 帧；
+  机器：Apple M2 Max / 96 GB / macOS 27.0.1 (26A434)、AC 电源、
+  外接显示屏在屏渲染，GOPROXY=goproxy.cn）：
+  - 600 节点 · 最终批 3 次（代码与入库一致）：
+    - run1：整帧 median=4.10 p95=5.40；功 median=3.50 p95=4.70 max=5.40；
+      探针自测 flow.View median=940µs、首帧 2.868ms；>16ms 帧 1 个
+      （f40=18.7，present=15.6，skip@f41）；冷启动首帧（含字体图集/首建树）
+      f1=49.3ms；zoom=0.1000；liveDrift f8→f38 maxAbsDelta=0.000000；
+      headless 双 Advance 前后 maxAbsDelta=0.000000；labelsFound=600/600。
+    - run2：4.10→中位 3.90 p95=4.80；功 median=3.40 p95=4.20 max=5.50；
+      flow.View median=900µs、首帧 2.144ms；>16ms：f80=18.0（present=14.4，
+      skip@f81）；冷 f1=44.7ms；zoom=0.1000；漂移同上全 0。
+    - run3：整帧 median=4.10 p95=5.70；功 median=3.50 p95=4.90 max=6.60；
+      flow.View median=914µs、首帧 2.436ms；>16ms：f77=18.4（present=13.9，
+      skip@f78）；冷 f1=38.8ms；zoom=0.1000；漂移同上全 0。
+  - 300 节点 · 1 次（最终批）：整帧 median=2.30 p95=5.30；功 median=1.90
+    p95=4.70 max=5.20；flow.View median=490µs、首帧 1.854ms；>16ms：
+    f86=19.2（present=15.0，skip@f87）；冷 f1=32.7ms；zoom=0.1348；
+    漂移全 0（300/300 比较）；labelsFound=300/300。
+  - 50 节点 · 1 次（最终批）：整帧 median=0.60 p95=2.00；功 median=0.40
+    p95=1.50 max=3.00；flow.View median=117µs、首帧 214µs；>16ms：
+    2 个（f7=18.4 present=18.1 skip@f8；f96=18.2 present=16.6 skip@f97）；
+    冷 f1=15.6ms；zoom=0.8564；漂移全 0；labelsFound=50/50。
+  - 首批复跑（输出行差异、驱动路径相同的早期版本探针）：600 节点 7 次
+    整帧 median=3.80/3.90/4.10/3.80/4.00/4.20/5.10ms，其中 4 次各有
+    1 个 18.1~18.6ms 的 present 主导帧（14.0~15.2ms、no GC）、3 次为 0
+    （max 6.10~7.30）；>16ms 合计 4/819 稳定帧 ≈0.5%。50/300 各 1 次：
+    median=0.90/2.90ms、max=3.20/6.30ms、无 >16ms 帧。全部 9 次
+    liveDrift 与 headless 双 Advance 漂移均为 0。
+  - 就绪口径：`state.Ready()` 全部跑次在第 3 帧变 true（headless
+    Tester 同样 builds=3）；探针侧零值 `state.Ready()` 预检通过。
+  - 日志异常仅 `IMKCFRunLoopWakeUpReliable`（PoC-1 已记录的无害告警）。
+  - 未测项如实声明：像素级目视可读性（本会话无截图通路，见"影响 3"）；
+    未跑 `go tool mygo dev` 打包形态（引擎同为 mygo 原生 surface 路径，
+    测量在 `go run` 下完成）。
+- 影响：
+  1. §9.3 的 168×46 定死尺寸规则获得机制级实证：`flow` 对给定
+     Width/Height 的节点走 `measure()` 短路（flow.go:280-292），
+     `prepare()` 只在尺寸/拓扑/间距哈希变化时重排（flow.go:367-406）。
+     实测 ready 后实窗 30 个真实帧、headless 两次 500 ms Advance 后
+     全部节点位置零漂移；反之若生产卡片（Task 17）让 Content 自然测量，
+     文本长短差异会触发 resized→重排——定死尺寸正是防这个，探针常量
+     `probeCardWidth=168 / probeCardHeight=46` 与 Task 17 生产卡片同值。
+  2. 规模曲线近似线性：功 median 0.40→1.90→3.40~3.50ms（50/300/600），
+     斜率 ~5-6 µs/节点。600 节点只占 16 ms 预算的 ~22%，Task 19 的
+     架构图主视图全量渲染 600 节点无需 LOD/虚拟化即可保帧；§9.3 引用的
+     "1000 静态 label 已花 397 µs" 口径与本次实测同数量级且仍是下界
+     （卡片+边全套 600 节点整帧 3.5~4.1 ms）。
+  3. 需要人工定夺的决策点（性能门槛不受影响）：600 节点 fit zoom 触到
+     minZoom=0.1 下限，说明默认"整图 fit"不可读。若按 spec §12
+     "性能过、可读性差"分支处理，方向是默认只画 Container 层、双击下钻
+     Component（Task 17 加 `showComponents bool`）——按 brief"先报告
+     再加"，本条目即报告，探针与生产均未加该开关。pan/zoom/Reveal 的
+     局部可读性不受影响（zoom 上限 2.5）。
+  4. >16ms 孤立帧定性为显示同步等待（present 相位占比 75%~98%、同帧功
+     正常、no GC、紧随引擎自报 catch-up skip 帧、50 节点也出现），
+     属 OS/WindowServer 环境毛刺。任何原生渲染层（含 WebView 替代方案）
+     都无法豁免"每一帧都不许 >16ms"的口径；按计划的门槛口径（稳定后
+     每帧耗时中位数）通过，且最差"功"帧 6.6 ms 亦有 2.4 倍余量。
+  5. 与 brief 骨架的 API 偏差记录（均按模块缓存实测源码执行，brief
+     Step 1 预先允许）：mygo@v0.5.5 不存在 `Window.SetContent` 与
+     `ui.Context.Frame()`；改用 `mygo.WindowOptions{Content: ui.View(fn)}`
+     注册内容回调（content.go:21/api_gen.go:2518、window.go:168），
+     帧计数由探针自持、以 `c.AnimationFrame()`（ui/context.go:372，
+     flow 未就绪时内部同款调用）逐帧驱动 vsync 真实帧；drift 对比帧号
+     取 readyAt+5 → readyAt+35（≥30 帧 ≈500 ms，即 brief 的 Advance
+     等价操作），另在 `ui.NewTester` 里做字面意义的两次
+     `tt.Advance(500ms)` 双重证据；主题按 flow 官方 example 以
+     `theme.Apply(c)` 应用。go.mod/go.sum 零变更，三个 pin 无漂移。
