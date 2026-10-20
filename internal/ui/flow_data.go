@@ -17,7 +17,13 @@ func (a *App) flowData() flow.Data {
 	elements := a.graph.Elements()
 	keep := a.quietSet()
 	nodes := make([]flow.Node, 0, len(elements))
-	visible := make(map[string]bool, len(elements))
+	// visible is read only in collapsed mode: allocating and filling it under
+	// the product default (showComponents true) was one wasted map plus n
+	// wasted writes per frame. Filtering still happens in exactly one place.
+	var visible map[string]bool
+	if !a.showComponents {
+		visible = make(map[string]bool, len(elements))
+	}
 	for _, el := range elements {
 		// The type-level fold (SetShowComponents): large repos drop the
 		// component layer because fit-to-600-nodes zoom hits flow's
@@ -45,7 +51,9 @@ func (a *App) flowData() flow.Data {
 			node.Muted = !keep[el.ID]
 		}
 		nodes = append(nodes, node)
-		visible[el.ID] = true
+		if visible != nil {
+			visible[el.ID] = true
+		}
 	}
 	edges := a.flowEdges()
 	if !a.showComponents {

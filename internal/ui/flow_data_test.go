@@ -157,6 +157,34 @@ func TestFlowEdgesWidthCapsAtFour(t *testing.T) {
 	}
 }
 
+// TestFlowEdgesSkipsSelfLoop 钉住 spec §6.3/§6.4：自环不画，只进详情面板的
+// 计数。自环刻意挂在 System 上：它的 PkgPathOf 是 ""，同包跳过（§6.4）罩不住
+// 它——删掉 FromID == ToID 那句守卫只有这条测试会红。
+func TestFlowEdgesSkipsSelfLoop(t *testing.T) {
+	sys := model.SystemID("example.com/x")
+	to := model.ContainerID("example.com/x/cmd/api")
+	a := NewApp(nil)
+	a.graph = graph.Build(
+		[]model.Element{
+			{ID: sys, Type: model.TypeSystem, Name: "x"},
+			{ID: to, Type: model.TypeContainer, Name: "api"},
+		},
+		[]model.Relationship{
+			{FromID: sys, ToID: sys, Type: model.RelCalls, Weight: 5},
+			{FromID: sys, ToID: to, Type: model.RelCalls, Weight: 1},
+		},
+	)
+	edges := a.flowEdges()
+	for _, e := range edges {
+		if e.Source == e.Target {
+			t.Fatalf("self-loop must not be drawn: %+v", e)
+		}
+	}
+	if len(edges) != 1 || edges[0].Source != sys || edges[0].Target != to {
+		t.Fatalf("the normal edge must survive next to the dropped self-loop, edges = %+v", edges)
+	}
+}
+
 // TestFlowDataShowComponentsFilter 钉住 ruling 1：关掉组件层只剩
 // System+Container，碰到隐藏节点的边一并丢掉；flowEdges 本身不过滤。
 func TestFlowDataShowComponentsFilter(t *testing.T) {

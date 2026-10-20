@@ -42,6 +42,17 @@ func TestIconForEveryType(t *testing.T) {
 	}
 }
 
+// TestCardSizeIsPoC4ProbeShape 钉的是 node_card.go 里两个字面量本身，不是
+// 常量与 flow.Node 的一致性（那由 TestFlowDataFixesEveryCardSize 把关，改成
+// 200 它照样绿）：PoC-4 的 600 节点帧时间就是用 168×46 的合成卡片量出来的
+// （Task 4），生产卡片一旦换了形状那个数字就作废。
+func TestCardSizeIsPoC4ProbeShape(t *testing.T) {
+	w, h := cardWidth, cardHeight
+	if w != float32(168) || h != float32(46) {
+		t.Fatalf("card size = %gx%g, PoC-4 measured frame time on 168x46 cards", w, h)
+	}
+}
+
 // TestNodeCardIsTwoTextLines 是 spec §9.3 那条性能约束的守门测试：卡片每帧
 // 重建，1000 个 label 已经要 397 µs，第三行文本或任何控件都是拿性能换可读性。
 // ui.NewTester 在内存里构建视图，不开窗口。
