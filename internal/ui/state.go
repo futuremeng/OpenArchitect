@@ -53,6 +53,11 @@ type App struct {
 	graph    *graph.Graph
 	settings config.Settings
 
+	// 设置页的保存回执。两个字段都只在主线程写（纪律 1），且 settingsErr
+	// 非空时 settingsSaved 必为 false —— saveRow 里同一次赋值保证这一点。
+	settingsSaved bool
+	settingsErr   error
+
 	selected    string
 	drillInto   string
 	impactMode  bool
