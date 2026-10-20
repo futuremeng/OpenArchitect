@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/oneo-me/onevra/source/components/command"
 	"github.com/oneo-me/onevra/source/components/flow"
 
 	"github.com/futuremeng/OpenArchitect/internal/config"
@@ -69,7 +70,10 @@ type App struct {
 	// it and Task 19 passes &a.flowState to flow.View, so it is deliberately a
 	// value field even though nothing here reads it yet.
 	flowState flow.State
-	cancel    context.CancelFunc
+	// commandState 只在主线程读写：command.State 明令禁止拷贝使用
+	// （components/command/command.go:30）。
+	commandState command.State
+	cancel       context.CancelFunc
 	// post hands work to the main thread. It is Window().Update in production
 	// and runs inline in tests, which is why no test needs a window.
 	post func(fn func())
