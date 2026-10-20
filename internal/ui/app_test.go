@@ -65,7 +65,10 @@ func TestReloadPicksNewestSnapshotAcrossRepos(t *testing.T) {
 	if a.snapshot.ID != second.SnapshotID {
 		t.Fatalf("Reload must take the newest snapshot, got %q want %q", a.snapshot.ID, second.SnapshotID)
 	}
-	if a.repoID != second.RepoID || a.status != StatusReady {
+	// A direct Reload re-reads the database but is not a completed scan, so the
+	// scan lifecycle state stays Idle (finishScan is what sets Ready). The
+	// empty-database test above pins the same branch.
+	if a.repoID != second.RepoID || a.status != StatusIdle {
 		t.Fatalf("repoID/status = %q/%v", a.repoID, a.status)
 	}
 	if len(a.graph.Elements()) != second.Elements {

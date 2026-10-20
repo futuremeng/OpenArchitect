@@ -61,9 +61,6 @@ func (a *App) Reload(ctx context.Context) error {
 	a.snapshot, a.repoID = snapshot, owner
 	a.graph = graph.Build(elements, rels)
 	a.selected, a.drillInto, a.impact = "", "", nil
-	// There is a graph on screen now, so "idle, nothing to show" would lie.
-	// An empty database keeps StatusIdle — see TestReloadWithEmptyDatabase.
-	a.status = StatusReady
 	return nil
 }
 
