@@ -43,10 +43,16 @@ func TestSaveThenLoad(t *testing.T) {
 	}
 }
 
+// 坏值口径：`Atoi` 报错的（not-a-number、空串）、数学上非法的（0、-4），还
+// 有一条 `strconv` 会**同时返回夹到 MaxInt64 的值和 ErrRange** 的
+// "99999999999999999999"。最后这条是承重的：它是全套件里唯一能钉住
+// config.go:34 里 `convErr == nil` 那半边的输入 —— 删掉那个子句，前四条照样
+// 回落（它们被 `depth >= 1` 拦下：Atoi 给它们返回 0 或负数），只有这条会被
+// 当成 MaxInt64 收下。
 func TestGarbageValuesFallBack(t *testing.T) {
 	db := newDB(t)
 	ctx := context.Background()
-	for _, bad := range []string{"not-a-number", "0", "-4", ""} {
+	for _, bad := range []string{"not-a-number", "0", "-4", "", "99999999999999999999"} {
 		if err := db.ConfigSet(ctx, impactDepthKey, bad); err != nil {
 			t.Fatal(err)
 		}

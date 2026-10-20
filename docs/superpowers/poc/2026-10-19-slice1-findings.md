@@ -403,3 +403,16 @@
       更正为绑定值；`newTestDB` 改收 `testing.TB` 供基准复用；
       `migrate_test.go` 测试专用 `str`（panic 版）删除、归并到
       `rows.go` 正式版，既有迁移/级联用例复跑 PASS。
+
+### 补记（Task 21）：mygo v0.5.5 有原生目录选择器（更正 plan:7012 的判断）
+
+- 结论：plan:7012「mygo v0.5.5 没有原生目录选择器」**不成立**。模块根的
+  `dialog.go` 提供 `mygo.Dialog.Open(OpenDialogOptions{Directory: true})`
+  （结构体 `dialog.go:24-44`，`Directory` :35；方法 :118；darwin 后端
+  `internal/darwin/dialog.go:96` 是真的 NSOpenPanel）。设置页的扫描目录在
+  切片 1 仍用手填输入框，理由是这调用阻塞到对话框关闭、且入口先跑
+  `needsApp("Dialog.Open")`（`dialog.go:119`），`App.Run` 之前在主线程调用
+  直接 panic（`app.go:128-131`），headless `ui.NewTester` 里一条测试都穿不
+  过去；spec §9.1 只要「扫描」这个动作，没点名选择器。原生选择器记为 §13
+  的后续候选。教训：判「有没有某个能力」要先 grep 模块根，别只 grep `root`
+  包——plan 就是这么漏的。
