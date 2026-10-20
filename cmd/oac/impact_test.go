@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -157,12 +160,109 @@ func TestRunAcceptsFlagsAfterPositional(t *testing.T) {
 	}
 }
 
+// newParseFlagSet builds a FlagSet with the same registrations run() makes,
+// for testing hoistFlags as the pure function it is.
+func newParseFlagSet() *flag.FlagSet {
+	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+	fs.String("db", "", "")
+	fs.Int("depth", 2, "")
+	return fs
+}
+
+// TestHoistFlagsTerminatorKeepsDashPositional pins fix F1: a dash-leading
+// token after the literal `--` escape hatch must stay a positional, exactly
+// like plain flag.Parse would treat it ("oac scan -- --weird" is data, not a
+// flag; it must not die on "flag provided but not defined").
+func TestHoistFlagsTerminatorKeepsDashPositional(t *testing.T) {
+	fs := newParseFlagSet()
+	got := hoistFlags(fs, []string{"--", "--weird"})
+	if want := []string{"--", "--weird"}; !slices.Equal(got, want) {
+		t.Fatalf("hoistFlags = %v, want %v (the -- stays, everything after it too)", got, want)
+	}
+	if err := fs.Parse(got); err != nil {
+		t.Fatalf("flag.Parse(%v): %v", got, err)
+	}
+	if rest := fs.Args(); !slices.Equal(rest, []string{"--weird"}) {
+		t.Fatalf("positionals after parse = %v, want [--weird] (hoist was %v)", rest, got)
+	}
+}
+
+// TestHoistFlagsValueKnowledgeComesFromFlagSet pins fix F2: hoistFlags must
+// decide "takes a value" from the FlagSet registration itself. --format is
+// registered here and in no hand-maintained list; with the old hard-coded
+// {db, depth} map this hoists ["--format", <path>] and --format silently
+// eats the path (desync fails without any error). With the map version this
+// test must go red.
+func TestHoistFlagsValueKnowledgeComesFromFlagSet(t *testing.T) {
+	fs := newParseFlagSet()
+	format := fs.String("format", "text", "registered only on the FlagSet")
+	got := hoistFlags(fs, []string{"testdata/repo", "--format", "json"})
+	if err := fs.Parse(got); err != nil {
+		t.Fatalf("flag.Parse(%v): %v", got, err)
+	}
+	if *format != "json" {
+		t.Fatalf("format = %q, want json: the value must travel with its flag (hoist was %v)", *format, got)
+	}
+	if rest := fs.Args(); !slices.Equal(rest, []string{"testdata/repo"}) {
+		t.Fatalf("positionals = %v, want the repo path to survive for dispatch (hoist was %v)", rest, got)
+	}
+}
+
+// TestRunMissingFlagValueReturnsError pins fix F3: a value flag with no
+// value must come back as an error from run(), not os.Exit(2) from
+// flag.ExitOnError — the survival of this test binary is itself the
+// regression proof.
+func TestRunMissingFlagValueReturnsError(t *testing.T) {
+	// Bare form: this token stream reaches flag.Parse as a trailing -db.
+	// Under ExitOnError it killed the whole test binary via os.Exit(2).
+	err := run(context.Background(), []string{"scan", "--db"})
+	if err == nil {
+		t.Fatal(`want "flag needs an argument" error for a bare --db`)
+	}
+	if !strings.Contains(err.Error(), "db") {
+		t.Fatalf("err = %v, want it to name the -db flag", err)
+	}
+	// Documented form: with no value to take, the trailing --db stays a
+	// positional (plain flag.Parse would likewise stop at the path and
+	// leave it unconsumed), and run() must return an error naming it
+	// instead of opening a database.
+	root := filepath.Join(fixturesRoot(), "shared-lib")
+	err = run(context.Background(), []string{"scan", root, "--db"})
+	if err == nil {
+		t.Fatal("want an error for --db without a value")
+	}
+	if !strings.Contains(err.Error(), "--db") {
+		t.Fatalf("err = %v, want it to name the --db flag", err)
+	}
+}
+
+// TestRunUnknownSubcommandNamesItAndCreatesNoDB pins fix F4: a misspelled
+// subcommand must (a) fail with an error naming it instead of the misleading
+// "no subcommand", and (b) never reach openDB, which MkdirAlls and creates a
+// real database as a side effect of a typo.
+func TestRunUnknownSubcommandNamesItAndCreatesNoDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "never-created.db")
+	err := run(context.Background(), []string{"nosuch", "--db", dbPath})
+	if err == nil {
+		t.Fatal("want unknown-subcommand error")
+	}
+	if !strings.Contains(err.Error(), "nosuch") {
+		t.Fatalf("err = %v, want it to name the unknown subcommand", err)
+	}
+	if _, statErr := os.Stat(dbPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("typo subcommand must not create the database; Stat err = %v", statErr)
+	}
+}
+
 func captureStdout(t *testing.T, fn func() error) string {
 	t.Helper()
 	old, r, w, err := stdoutToPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+	// F3: restore even if fn panics—the linear path alone leaked the
+	// redirection into every later test in this binary.
+	defer func() { os.Stdout = old }()
 	runErr := fn()
 	_ = w.Close()
 	os.Stdout = old
