@@ -111,9 +111,10 @@ func TestRepoScanButtonDisabledWhileScanning(t *testing.T) {
 	// 按钮仍进 rt.labels、tt.Click 仍返回 nil，只是 release 不 ++clicks，
 	// input.go:406-414）。那句 Disabled 唯一的可观察后果是这个按钮不画
 	// 按压/悬停底色（shells/sidebar/icon_button.go:24-26），像素级的事留给
-	// Task 24 的真窗口手工验收。反向证据：删掉门，BeginScan 会走到
-	// scanner.Detect(t.TempDir())（无 go.mod）→ failScan → StatusFailed，
-	// 最后那条 status 断言就红。
+	// Task 24 的真窗口手工验收。反向证据是变异测出来的：门与 Disabled **同时**
+	// 删掉，点击才会一路走到 scanner.Detect(t.TempDir())（无 go.mod）→ failScan
+	// → StatusFailed，最后那条 status 断言红；只删门、留着 Disabled 时点击根本
+	// 进不到 BeginScan，测试仍绿 —— 所以这条钉的是「两道守卫至少得有一道在」。
 	if a.cancel != nil {
 		t.Fatal("a gated scan must never start")
 	}
