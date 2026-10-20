@@ -29,6 +29,23 @@ func TestDetectUnsupportedVersusUnreadable(t *testing.T) {
 	}
 }
 
+// TestDetectRejectsRegularFile pins the !info.IsDir() arm of Detect (controller
+// ruling R5, carried from Task 11): `oac scan somefile.go` is spec §10's
+// "不支持的语言" answer, not "读不了"—deleting the arm makes the adapter's
+// stat of "somefile.go/go.mod" fail with ENOTDIR, which is not fs.ErrNotExist,
+// and the whole suite would otherwise still pass while classifying it
+// ErrUnreadable.
+func TestDetectRejectsRegularFile(t *testing.T) {
+	file := filepath.Join(fixtureRoot(), "simple-multi-main", "go.mod")
+	_, err := Detect(file)
+	if !errors.Is(err, ErrUnsupportedLanguage) {
+		t.Fatalf("err = %v, want ErrUnsupportedLanguage", err)
+	}
+	if errors.Is(err, ErrUnreadable) {
+		t.Fatalf("err = %v: a regular file must not classify as unreadable", err)
+	}
+}
+
 func TestDetectUnreadablePermission(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: chmod would not block access")
