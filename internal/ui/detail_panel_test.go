@@ -92,6 +92,11 @@ func TestPreviewMethods(t *testing.T) {
 	if shown, hidden := previewMethods(short, false); len(shown) != 1 || hidden != 0 {
 		t.Fatalf("a short list hides nothing: %v, hidden %d", shown, hidden)
 	}
+	// 正好 methodPreview 个：一条都不许藏。
+	exact := model.Element{Methods: []string{"Add", "Remove", "Total"}}
+	if shown, hidden := previewMethods(exact, false); len(shown) != 3 || hidden != 0 {
+		t.Fatalf("a list of exactly methodPreview hides nothing: %v, hidden %d", shown, hidden)
+	}
 	if shown, hidden := previewMethods(model.Element{}, false); len(shown) != 0 || hidden != 0 {
 		t.Fatalf("no methods: %v, hidden %d", shown, hidden)
 	}
@@ -121,7 +126,8 @@ func TestDetailPanelRendersFacts(t *testing.T) {
 		detailFile,
 		"Basket 管理一次结账的全部条目。",
 		"导出方法（4）", "Add", "Total",
-		"直接上游", "直接下游", "Orders", "Item",
+		// 带计数的整串：`HasText` 是 Contains，写全才钉得住 hits 的条数。
+		"直接上游（1）", "直接下游（1）", "Orders", "Item",
 		"同包类型",
 	} {
 		if !tt.HasText(want) {
