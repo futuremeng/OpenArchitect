@@ -58,6 +58,12 @@ type App struct {
 	impact      *graph.ImpactReport
 	commandOpen bool
 
+	// showComponents is the type-level fold switch (plan pre-announced it
+	// for Task 17 after PoC-4): false keeps only System+Container nodes.
+	// Default true — the product granularity the user chose is type-inclusive;
+	// the toggle is an opt-in for large repos, never an auto-collapse.
+	showComponents bool
+
 	// flowState is the flow camera/viewport state. spec §9.2 mandates App hold
 	// it and Task 19 passes &a.flowState to flow.View, so it is deliberately a
 	// value field even though nothing here reads it yet.
@@ -74,10 +80,11 @@ type App struct {
 
 func NewApp(db *store.DB) *App {
 	return &App{
-		db:    db,
-		page:  PageGraph,
-		graph: graph.Build(nil, nil),
-		post:  func(fn func()) { fn() },
+		db:             db,
+		page:           PageGraph,
+		graph:          graph.Build(nil, nil),
+		showComponents: true,
+		post:           func(fn func()) { fn() },
 	}
 }
 
@@ -113,6 +120,10 @@ func (a *App) Page() Page { return a.page }
 func (a *App) SetPage(p Page) { a.page = p }
 
 func (a *App) SetCommandOpen(open bool) { a.commandOpen = open }
+
+// SetShowComponents toggles the type-level fold. Only flowData consults it;
+// flowEdges stays the unfiltered translation.
+func (a *App) SetShowComponents(on bool) { a.showComponents = on }
 
 // Open drills into id. Like flow's double-click it lands the selection too;
 // the spec §9.3 line 515 form only wrote drillInto because there Select ran
