@@ -227,10 +227,10 @@ func TestNewAppDefaultsToContainerLayer(t *testing.T) {
 	}
 }
 
-// TestFlowDataShowComponentsFilter 钉住 ruling 1 的开关契约：折叠态只剩
-// System+Container，碰到隐藏节点的边一并丢掉，展开后 5 个节点全部回来；
-// flowEdges 本身不过滤。折叠就是默认态，所以它不调 SetShowComponents(false)，
-// 由默认折叠 → SetShowComponents(true) 驱动开关。
+// TestFlowDataShowComponentsFilter 钉住折叠开关的契约：折叠态只剩
+// System+Container，碰到隐藏节点的边一并丢掉，展开后 5 个节点全部回来，
+// 再折叠又回到 2 个；flowEdges 本身不过滤。折叠就是默认态，所以起点不调
+// SetShowComponents(false)，由默认折叠 → true → false 走完开关的两个方向。
 func TestFlowDataShowComponentsFilter(t *testing.T) {
 	a := flowFixtureApp(t)
 	if a.showComponents {
@@ -253,5 +253,10 @@ func TestFlowDataShowComponentsFilter(t *testing.T) {
 	a.SetShowComponents(true)
 	if got := len(a.flowData().Nodes); got != 5 {
 		t.Fatalf("SetShowComponents(true) must restore every node, nodes = %d", got)
+	}
+	// Both directions, or the switch is just a one-way latch.
+	a.SetShowComponents(false)
+	if got := len(a.flowData().Nodes); got != 2 {
+		t.Fatalf("SetShowComponents(false) must fold back to System+Container, nodes = %d", got)
 	}
 }

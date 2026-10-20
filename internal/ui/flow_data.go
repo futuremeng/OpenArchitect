@@ -26,14 +26,14 @@ func (a *App) flowData() flow.Data {
 		visible = make(map[string]bool, len(elements))
 	}
 	for _, el := range elements {
-		// The type-level fold (SetShowComponents): the default drops the
-		// component layer because fit-to-600-nodes zoom hits flow's
-		// minZoom = .1 and the 168×46 cards rasterise into unreadable
-		// specks (PoC-4: 300 nodes already fit at 0.1348), so spec §12 row
-		// 4 prescribes the Container layer as the default. It is a manual
-		// opt-in only — never an auto-collapse — because the
-		// readable/unreadable crossover was never measured and any
-		// node-count threshold would be a guess.
+		// The type-level fold (SetShowComponents): spec §12 row 4 prescribes
+		// the Container layer as the default, and PoC-4 measured the fit
+		// zoom that triggers that branch — 600 nodes fit at minZoom = .1 and
+		// 300 at 0.1348, which shrinks a 168×46 card to about 23×6 px. The
+		// geometry is measured; whether the eye can still read it was not
+		// (no screenshot path). It is a manual opt-in only — never an
+		// auto-collapse — because the readable/unreadable crossover was
+		// never measured and any node-count threshold would be a guess.
 		if !a.showComponents && el.Type == model.TypeComponent {
 			continue
 		}

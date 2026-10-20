@@ -59,9 +59,10 @@ type App struct {
 	commandOpen bool
 
 	// showComponents is the type-level fold switch: the default is the
-	// Container layer only, per spec §12 row 4's readability branch (measured:
-	// a 300-node fit renders the 168×46 cards at ~23×6 px). The toggle opts
-	// components in; it is never an auto-collapse on node count.
+	// Container layer only, per spec §12 row 4's readability branch. PoC-4
+	// measured the fit zoom (300 nodes → 0.1348), which scales a 168×46 card
+	// down to ~23×6 px. The toggle opts components in; it is never an
+	// auto-collapse on node count.
 	showComponents bool
 
 	// flowState is the flow camera/viewport state. spec §9.2 mandates App hold
