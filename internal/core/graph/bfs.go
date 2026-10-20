@@ -16,12 +16,20 @@ type Hit struct {
 }
 
 // Upstream walks incoming edges (who calls or depends on me); Downstream walks
-// outgoing ones. Both stop at maxDepth, and both skip contains edges: a
-// hierarchy edge would let one System swallow the whole tree inside a hop
-// (spec §8.2).
+// outgoing ones. Both stop at maxDepth, and both diffuse only calls and
+// depends_on (spec §8.2 allowlist): a contains edge would let one System
+// swallow the whole tree inside a hop, and a relation type added in slice 2
+// must not start diffusing just because nobody edited bfs.
+// IntraPackageIDs (§6.4) keeps the older non-contains rule on purpose—see
+// the comment there.
 func (g *Graph) Upstream(id string, maxDepth int) []Hit { return g.bfs(id, maxDepth, g.in) }
 
 func (g *Graph) Downstream(id string, maxDepth int) []Hit { return g.bfs(id, maxDepth, g.out) }
+
+// diffuses is the §8.2 allowlist: only these two relation types carry impact.
+func diffuses(t model.RelType) bool {
+	return t == model.RelCalls || t == model.RelDependsOn
+}
 
 func (g *Graph) bfs(start string, maxDepth int, adjacency map[string][]link) []Hit {
 	if _, ok := g.elements[start]; !ok || maxDepth < 1 {
@@ -34,7 +42,7 @@ func (g *Graph) bfs(start string, maxDepth int, adjacency map[string][]link) []H
 		var next []string
 		for _, current := range frontier {
 			for _, l := range adjacency[current] {
-				if l.rel.Type == model.RelContains || visited[l.other] {
+				if !diffuses(l.rel.Type) || visited[l.other] {
 					continue
 				}
 				// One visit per node records it at its shallowest hop, which is

@@ -2,6 +2,7 @@ package graph
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/futuremeng/OpenArchitect/internal/core/model"
@@ -52,6 +53,58 @@ func TestBuildDropsEdgesWithUnknownEndpoints(t *testing.T) {
 	})
 	if len(g.Relationships()) != 0 {
 		t.Fatalf("dangling edge kept: %+v", g.Relationships())
+	}
+}
+
+// tinyGraph 的输入恰好已按序，pin 不住 Build 的两次排序；下游一切行级比对
+// （golden 等价的 want-list、CLI/GUI、DoD-4）都以这两个顺序为锚点，必须用
+// 故意乱序的输入把它钉死（R4）。
+func TestBuildSortsDeliberatelyUnsortedInput(t *testing.T) {
+	g := Build([]model.Element{
+		{ID: "cmp:z.Z", Name: "Z"}, {ID: "cmp:a.A", Name: "A"}, {ID: "cmp:m.M", Name: "M"},
+	}, []model.Relationship{
+		{FromID: "cmp:z.Z", ToID: "cmp:a.A", Type: model.RelCalls, Weight: 1},
+		{FromID: "cmp:a.A", ToID: "cmp:m.M", Type: model.RelDependsOn, Weight: 1},
+		{FromID: "cmp:a.A", ToID: "cmp:m.M", Type: model.RelCalls, Weight: 1},
+		{FromID: "cmp:m.M", ToID: "cmp:a.A", Type: model.RelCalls, Weight: 1},
+		{FromID: "cmp:a.A", ToID: "cmp:z.Z", Type: model.RelDependsOn, Weight: 1},
+	})
+	var ids []string
+	for _, e := range g.Elements() {
+		ids = append(ids, e.ID)
+	}
+	if fmt.Sprint(ids) != fmt.Sprint([]string{"cmp:a.A", "cmp:m.M", "cmp:z.Z"}) {
+		t.Fatalf("Elements() must sort by id, got %v", ids)
+	}
+	var keys []string
+	for _, r := range g.Relationships() {
+		keys = append(keys, fmt.Sprintf("%s>%s:%s", r.FromID, r.ToID, r.Type))
+	}
+	want := []string{
+		"cmp:a.A>cmp:m.M:calls",
+		"cmp:a.A>cmp:m.M:depends_on",
+		"cmp:a.A>cmp:z.Z:depends_on",
+		"cmp:m.M>cmp:a.A:calls",
+		"cmp:z.Z>cmp:a.A:calls",
+	}
+	if fmt.Sprint(keys) != fmt.Sprint(want) {
+		t.Fatalf("Relationships() must sort by (from,to,type), got %v", keys)
+	}
+}
+
+// R3：spec §8.2 的扩散白名单——「参与扩散的边类型只有 calls 与 depends_on」。
+// 黑名单版（== contains 才跳过）会放行 implements，这个测试就是白名单的证据。
+func TestBfsDiffusesOnlyCallsAndDependsOn(t *testing.T) {
+	g := Build([]model.Element{
+		{ID: "cmp:a.A", Name: "A"}, {ID: "cmp:b.B", Name: "B"},
+	}, []model.Relationship{
+		{FromID: "cmp:a.A", ToID: "cmp:b.B", Type: model.RelType("implements"), Weight: 1},
+	})
+	if hits := g.Downstream("cmp:a.A", 3); len(hits) != 0 {
+		t.Fatalf("implements edge must not diffuse downstream: %+v", hits)
+	}
+	if hits := g.Upstream("cmp:b.B", 3); len(hits) != 0 {
+		t.Fatalf("implements edge must not diffuse upstream: %+v", hits)
 	}
 }
 
