@@ -104,7 +104,7 @@ func TestCommandItemsSearchesCurrentSnapshot(t *testing.T) {
 	// Escape 关闭会保留 query（State doc："Closing a dialog preserves the
 	// query"，command.go:34），而弹窗的构建回调只在打开时运行（dialog.go:27），
 	// 关闭后的帧没有任何东西消费 items。所以同一个 query 在关闭态必须只回到
-	// 三条静态条目——这次查库要被子时掐掉，不能留着。
+	// 三条静态条目——关闭态的这次查库必须被掐掉，不能留着。
 	a.SetCommandOpen(false)
 	closed, err := a.commandItems("Cart")
 	if err != nil {
@@ -236,12 +236,16 @@ func TestRunCommandScanInFlightStaysNoOp(t *testing.T) {
 	if a.status != StatusScanning || a.Page() != PageGraph {
 		t.Fatalf("in-flight activation must leave state untouched: status=%v page=%q", a.status, a.Page())
 	}
-	// 先 CancelScan 再排空投递的闭包：finishScan 因此走 context.Canceled →
-	// StatusIdle 分支（app.go:105-115），测试返回时不留任何还在写 App 的 goroutine。
+	// 排空投递的闭包：闭包只在 scanner.Run 返回后才产生（app.go:98-101），所以
+	// 收到它就等于扫描 goroutine 再也不会写 App 字段，测试返回时没有悬空写者。
+	// 落在哪个终态取决于 CancelScan 与扫描完成谁先到——shared-lib 只有几个包，
+	// 两者都可能，所以这里钉的是「已 settle」而不是某一终态：finishScan 的三条
+	// 出口（Canceled→Idle、err→Failed、成功→Ready）都把 status 移出 Scanning
+	// 并把 a.cancel 清回 nil（app.go:105-134）。
 	a.CancelScan()
 	(<-queued)()
-	if a.status != StatusIdle {
-		t.Fatalf("cancelled scan must land on Idle, got status=%v err=%v", a.status, a.err)
+	if a.status == StatusScanning || a.cancel != nil {
+		t.Fatalf("posted closure must settle the scan, status=%v cancel==nil:%v err=%v", a.status, a.cancel == nil, a.err)
 	}
 }
 
