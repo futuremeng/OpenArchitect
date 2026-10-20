@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -67,7 +68,8 @@ func TestReloadPicksNewestSnapshotAcrossRepos(t *testing.T) {
 	}
 	// A direct Reload re-reads the database but is not a completed scan, so the
 	// scan lifecycle state stays Idle (finishScan is what sets Ready). The
-	// empty-database test above pins the same branch.
+	// empty-database test below pins the ruling's other half with the same
+	// status assertion.
 	if a.repoID != second.RepoID || a.status != StatusIdle {
 		t.Fatalf("repoID/status = %q/%v", a.repoID, a.status)
 	}
@@ -83,6 +85,34 @@ func TestReloadWithEmptyDatabase(t *testing.T) {
 	}
 	if a.snapshot.ID != "" || a.repoID != "" || len(a.graph.Elements()) != 0 {
 		t.Fatalf("snapshot = %+v repoID = %q", a.snapshot, a.repoID)
+	}
+	// Ruling 6's other half: Reload never writes the scan lifecycle state, in
+	// the empty branch any more than in the non-empty one.
+	if a.status != StatusIdle {
+		t.Fatalf("Reload must not touch the scan lifecycle state: status = %v", a.status)
+	}
+}
+
+// TestReloadEmptyBranchClearsSelection pins the hoisted clear: every Reload
+// that completes the read phase, empty-database branch included, ends with a
+// cleared selection — one writer, no asymmetry between the two branches.
+// Impact mode is off, so Select never runs analyse and the stale selection is
+// purely field state.
+func TestReloadEmptyBranchClearsSelection(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.Select("cmp:stale")
+	if a.selected != "cmp:stale" {
+		t.Fatalf("setup: selected = %q", a.selected)
+	}
+	if err := a.Reload(context.Background()); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if a.selected != "" || a.drillInto != "" || a.impact != nil {
+		t.Fatalf("empty-database Reload must clear selection: selected=%q drillInto=%q impact=%+v",
+			a.selected, a.drillInto, a.impact)
 	}
 }
 
@@ -127,6 +157,39 @@ func TestFinishScanKeepsPreviousGraph(t *testing.T) {
 	a.finishScan(scanner.Report{}, context.Canceled)
 	if a.status != StatusIdle || a.err != nil || len(a.graph.Elements()) != before {
 		t.Fatalf("cancel must return to Idle with the old graph: status=%v err=%v", a.status, a.err)
+	}
+}
+
+// TestFinishScanReloadFailureKeepsGraph pins finishScan's fourth failure
+// branch (spec §10): the scan goroutine succeeded, but the Reload that
+// re-reads stored rows failed, so the screen must keep the previous graph —
+// StatusReady over a graph that no longer matches the database would lie.
+// The database is closed out from under the app so a.Reload's config.Load
+// errors for real; newTestApp's t.Cleanup discards Close's error, so the
+// second close there is harmless.
+func TestFinishScanReloadFailureKeepsGraph(t *testing.T) {
+	a := newTestApp(t)
+	seedScan(t, a, fixtureDir("shared-lib"))
+	if err := a.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before := len(a.graph.Elements())
+	if before == 0 {
+		t.Fatal("setup: graph is empty")
+	}
+	if err := a.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	// A report that looks successful: err == nil, so only the internal
+	// Reload can fail.
+	a.finishScan(scanner.Report{Elements: before}, nil)
+	if a.status != StatusFailed || a.err == nil {
+		t.Fatalf("status/err = %v/%v, want Failed/non-nil", a.status, a.err)
+	}
+	if len(a.graph.Elements()) != before {
+		t.Fatalf("reload failure must keep the previous graph on screen: %d want %d",
+			len(a.graph.Elements()), before)
 	}
 }
 
@@ -305,6 +368,13 @@ func TestStatusLineCountsPackageErrors(t *testing.T) {
 	line := a.StatusLine()
 	if line == "" || !strings.HasPrefix(line, "完成：") {
 		t.Fatalf("StatusLine = %q", line)
+	}
+	// Spec §10 row 1's copy: the errs > 0 arm of StatusReady. Count comes from
+	// the live graph so the expected string cannot drift from the fixture.
+	a.snapshot.PackageErrors = []string{"p1", "p2"}
+	want := fmt.Sprintf("完成：%d 个元素，%d 个包有错误", len(a.graph.Elements()), len(a.snapshot.PackageErrors))
+	if got := a.StatusLine(); got != want {
+		t.Fatalf("StatusLine with package errors = %q want %q", got, want)
 	}
 	a.status = StatusFailed
 	a.err = errors.New("boom")

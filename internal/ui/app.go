@@ -40,26 +40,30 @@ func (a *App) Reload(ctx context.Context) error {
 			newest, owner = id, r.ID
 		}
 	}
+	// The selection clear is hoisted to the single point below, so every
+	// Reload that completes the read phase ends with a cleared selection —
+	// one writer, no asymmetry between the branches. The error returns
+	// deliberately leave it unset: a failed read keeps the old screen.
 	if newest == "" {
 		a.snapshot = model.ArchitectureSnapshot{}
 		a.repoID = ""
 		a.graph = graph.Build(nil, nil)
-		return nil
+	} else {
+		snapshot, err := a.db.Snapshot(ctx, newest)
+		if err != nil {
+			return err
+		}
+		elements, err := a.db.Elements(ctx, newest)
+		if err != nil {
+			return err
+		}
+		rels, err := a.db.Relationships(ctx, newest)
+		if err != nil {
+			return err
+		}
+		a.snapshot, a.repoID = snapshot, owner
+		a.graph = graph.Build(elements, rels)
 	}
-	snapshot, err := a.db.Snapshot(ctx, newest)
-	if err != nil {
-		return err
-	}
-	elements, err := a.db.Elements(ctx, newest)
-	if err != nil {
-		return err
-	}
-	rels, err := a.db.Relationships(ctx, newest)
-	if err != nil {
-		return err
-	}
-	a.snapshot, a.repoID = snapshot, owner
-	a.graph = graph.Build(elements, rels)
 	a.selected, a.drillInto, a.impact = "", "", nil
 	return nil
 }
@@ -119,6 +123,11 @@ func (a *App) finishScan(report scanner.Report, err error) {
 	// the only correct source.
 	if a.scanRoot != "" && a.scanRoot != a.settings.ScanRoot {
 		a.settings.ScanRoot = a.scanRoot
+		// Best-effort by ruling, and deliberate per spec §10's silence: a failed
+		// app_config write must not invalidate a scan that succeeded. Accepted
+		// consequence: memory (a.settings.ScanRoot) and the database then diverge
+		// until the next successful save — the settings page shows what the user
+		// just scanned, the next launch shows what was persisted.
 		_ = a.SaveSettings(context.Background(), a.settings)
 	}
 }
