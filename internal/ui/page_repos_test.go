@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -67,6 +68,11 @@ func TestRepoScanButtonRunsToReady(t *testing.T) {
 		Lang:      "go",
 	}
 	a.repos = []model.Repo{repo}
+	// 先留一条旧的失败错误：BeginScan 在把 status 写成 Scanning 的同一条语句里
+	// 清 a.err（app.go:90），而 finishScan 的成功臂从不碰 a.err。所以删掉那句
+	// 清理，下面「跑完的扫描必须清掉旧错误」就红 —— 不这么 setup，a.err 本来就是
+	// nil，那条断言钉不住任何东西。
+	a.err = errors.New("stale failure from the last scan")
 
 	done := make(chan func(), 1)
 	a.SetPost(func(fn func()) { done <- fn })
@@ -106,15 +112,19 @@ func TestRepoScanButtonDisabledWhileScanning(t *testing.T) {
 	if err := tt.Click("扫描 x"); err != nil {
 		t.Fatal(err)
 	}
-	// 这条钉的是 BeginScan 里的门（ErrScanInFlight，app.go:79-81），不是那一行
-	// scan.Disabled：门在，删掉 Disabled 本测试照样绿（headless 里 disabled 的
-	// 按钮仍进 rt.labels、tt.Click 仍返回 nil，只是 release 不 ++clicks，
-	// input.go:406-414）。那句 Disabled 唯一的可观察后果是这个按钮不画
-	// 按压/悬停底色（shells/sidebar/icon_button.go:24-26），像素级的事留给
-	// Task 24 的真窗口手工验收。反向证据是变异测出来的：门与 Disabled **同时**
-	// 删掉，点击才会一路走到 scanner.Detect(t.TempDir())（无 go.mod）→ failScan
-	// → StatusFailed，最后那条 status 断言红；只删门、留着 Disabled 时点击根本
-	// 进不到 BeginScan，测试仍绿 —— 所以这条钉的是「两道守卫至少得有一道在」。
+	// 这条钉的是 BeginScan 里的门（ErrScanInFlight，app.go:79-81）与那一行
+	// scan.Disabled 这**一对**守卫：只删门、留着 Disabled 时点击根本进不到
+	// BeginScan，测试仍绿；只删 Disabled、留着门时门照挡，也仍绿。变异实测：
+	// 两个同时删掉，点击一路走到 scanner.Detect(t.TempDir())（无 go.mod）→
+	// failScan → StatusFailed，最后那条 status 断言红。
+	// Disabled 在这一条 headless 点击路径上的可观察后果只有「按钮不画按压/
+	// 悬停底色」——sidebar.IconButton 直接委派 components.IconButton（icon_button.go:12-14），
+	// Plain 臂的 Draw 在 case b.IsDisabled() 上取空分支（components/icon_button.go:43），
+	// 像素级的事留给 Task 24 的真窗口手工验收。disabled 还摘掉 Tab 可达性与键盘
+	// 激活（同文件 :16-18「MyGo owns its pointer, keyboard and focus behavior」），
+	// 但那是 mygo 的输入层，本测试无从区分。
+	// （disabled 的按钮仍进 rt.labels、tt.Click 仍返回 nil，只是 mygo 的 ui/input.go:406-414
+	// 在 release 时不 ++clicks。）
 	if a.cancel != nil {
 		t.Fatal("a gated scan must never start")
 	}

@@ -42,7 +42,8 @@ func (a *App) settingsPage(c *ui.Context) {
 // `App.Run` 之前在主线程调用直接 panic（app.go:128-131），headless 测试一条
 // 也穿不过去；spec §9.1 只要「扫描」这个动作，没点名选择器。所以这一切片用
 // 输入框 + BeginScan 里那次同步的 scanner.Detect 兜底（不是 go 模块就当场
-// 失败，不起 goroutine）。选择器本身记在 §13 的后续候选里。
+// 失败，不起 goroutine）。换成原生选择器是后续切片的事，出处记在 findings 的
+// 「补记（Task 21）」里。
 func (a *App) scanRootField(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).FillWidth().Gap(t.Space(1)).Children(func() {
