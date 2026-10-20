@@ -1,0 +1,185 @@
+package ui
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/oneo-me/onevra/source/components/flow"
+
+	"github.com/futuremeng/OpenArchitect/internal/config"
+	"github.com/futuremeng/OpenArchitect/internal/core/graph"
+	"github.com/futuremeng/OpenArchitect/internal/core/model"
+	"github.com/futuremeng/OpenArchitect/internal/core/store"
+)
+
+// Page is which page the content region shows. sidebar.Shell has no page
+// registry (spec §16 U1), so switching is a branch inside the Content builder
+// and Shell.SetPage is never called.
+type Page string
+
+const (
+	PageGraph    Page = "graph"
+	PageRepos    Page = "repos"
+	PageSettings Page = "settings"
+)
+
+// Status is the scan lifecycle shown in the sidebar's status line.
+type Status uint8
+
+const (
+	StatusIdle Status = iota
+	StatusScanning
+	StatusReady
+	StatusFailed
+)
+
+// App is the whole application state, and the only thing the pages read.
+// spec §9.2 listed snapshot as a pointer; a value type with ID == "" is the
+// empty state, which removes a nil check from every reader.
+type App struct {
+	db       *store.DB
+	repoID   string
+	scanRoot string
+
+	page     Page
+	status   Status
+	err      error
+	progress string
+
+	repos    []model.Repo
+	snapshot model.ArchitectureSnapshot
+	graph    *graph.Graph
+	settings config.Settings
+
+	selected    string
+	drillInto   string
+	impactMode  bool
+	impact      *graph.ImpactReport
+	commandOpen bool
+
+	// flowState is the flow camera/viewport state. spec §9.2 mandates App hold
+	// it and Task 19 passes &a.flowState to flow.View, so it is deliberately a
+	// value field even though nothing here reads it yet.
+	flowState flow.State
+	cancel    context.CancelFunc
+	// post hands work to the main thread. It is Window().Update in production
+	// and runs inline in tests, which is why no test needs a window.
+	post func(fn func())
+	// openPath reveals a file in the OS. Task 22 wires it to
+	// mygo.Shell.OpenPath; nil until then, and detail_panel.go disables the
+	// row instead of importing the mygo root package early.
+	openPath func(string) error
+}
+
+func NewApp(db *store.DB) *App {
+	return &App{
+		db:    db,
+		page:  PageGraph,
+		graph: graph.Build(nil, nil),
+		post:  func(fn func()) { fn() },
+	}
+}
+
+// SetPost installs the cross-thread handoff. Call it once, right after
+// NewShell; every later goroutine result goes through it (spec §5.3).
+func (a *App) SetPost(fn func(func())) {
+	if fn != nil {
+		a.post = fn
+	}
+}
+
+// ErrNoPathOpener is what OpenFile reports before Task 22 wires the real
+// opener, so the drawer can grey the row out instead of panicking.
+var ErrNoPathOpener = errors.New("ui: no path opener installed")
+
+func (a *App) SetOpenPath(fn func(string) error) { a.openPath = fn }
+
+// OpenFile reveals an element's source file (spec §9.4). It never panics:
+// mygo.Shell.OpenPath needs a running app, and the only caller is a click
+// handler, which by definition runs after App.Run.
+func (a *App) OpenFile(path string) error {
+	if path == "" {
+		return fmt.Errorf("ui: empty path")
+	}
+	if a.openPath == nil {
+		return ErrNoPathOpener
+	}
+	return a.openPath(path)
+}
+
+func (a *App) Page() Page { return a.page }
+
+func (a *App) SetPage(p Page) { a.page = p }
+
+func (a *App) SetCommandOpen(open bool) { a.commandOpen = open }
+
+// Open drills into id. Like flow's double-click it lands the selection too;
+// the spec §9.3 line 515 form only wrote drillInto because there Select ran
+// first, but command-palette callers skip the single click.
+func (a *App) Open(id string) {
+	a.drillInto = id
+	if a.selected != id {
+		a.Select(id)
+	}
+}
+
+// Select is flow's single-click handler; "" comes from a click on empty
+// space and closes the drawer (spec §9.3).
+func (a *App) Select(id string) {
+	a.selected = id
+	if id == "" {
+		a.impact = nil
+		a.drillInto = ""
+		return
+	}
+	if a.impactMode {
+		a.analyse(id)
+	}
+}
+
+func (a *App) SetImpactMode(on bool) {
+	a.impactMode = on
+	if !on {
+		a.impact = nil
+		return
+	}
+	if a.selected != "" {
+		a.analyse(a.selected)
+	}
+}
+
+func (a *App) analyse(id string) {
+	report, err := graph.Analyze(a.graph, id, a.settings.ImpactDepth)
+	if err != nil {
+		a.impact = nil
+		return
+	}
+	a.impact = &report
+}
+
+// StatusLine is the sidebar's one-line summary (spec §10's error table rows).
+func (a *App) StatusLine() string {
+	switch a.status {
+	case StatusScanning:
+		if a.progress != "" {
+			return a.progress
+		}
+		return "正在扫描…"
+	case StatusFailed:
+		// No nil guard on a.err: only failScan and finishScan set StatusFailed,
+		// and both write err in the same statement.
+		return "失败：" + a.err.Error()
+	case StatusReady:
+		count := len(a.graph.Elements())
+		if errs := len(a.snapshot.PackageErrors); errs > 0 {
+			return fmt.Sprintf("完成：%d 个元素，%d 个包有错误", count, errs)
+		}
+		return fmt.Sprintf("完成：%d 个元素", count)
+	default:
+		if len(a.graph.Elements()) == 0 {
+			return "选择目录后点扫描"
+		}
+		return fmt.Sprintf("%d 个元素", len(a.graph.Elements()))
+	}
+}
