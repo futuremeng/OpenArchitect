@@ -58,10 +58,10 @@ type App struct {
 	impact      *graph.ImpactReport
 	commandOpen bool
 
-	// showComponents is the type-level fold switch (plan pre-announced it
-	// for Task 17 after PoC-4): false keeps only System+Container nodes.
-	// Default true — the product granularity the user chose is type-inclusive;
-	// the toggle is an opt-in for large repos, never an auto-collapse.
+	// showComponents is the type-level fold switch: the default is the
+	// Container layer only, per spec §12 row 4's readability branch (measured:
+	// a 300-node fit renders the 168×46 cards at ~23×6 px). The toggle opts
+	// components in; it is never an auto-collapse on node count.
 	showComponents bool
 
 	// flowState is the flow camera/viewport state. spec §9.2 mandates App hold
@@ -83,7 +83,7 @@ func NewApp(db *store.DB) *App {
 		db:             db,
 		page:           PageGraph,
 		graph:          graph.Build(nil, nil),
-		showComponents: true,
+		showComponents: false,
 		post:           func(fn func()) { fn() },
 	}
 }

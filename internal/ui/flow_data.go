@@ -17,21 +17,23 @@ func (a *App) flowData() flow.Data {
 	elements := a.graph.Elements()
 	keep := a.quietSet()
 	nodes := make([]flow.Node, 0, len(elements))
-	// visible is read only in collapsed mode: allocating and filling it under
-	// the product default (showComponents true) was one wasted map plus n
-	// wasted writes per frame. Filtering still happens in exactly one place.
+	// visible is read only in collapsed mode (the default, spec §12 row 4):
+	// allocating and filling it when components are opted in would be one
+	// wasted map plus n wasted writes per frame. Filtering still happens in
+	// exactly one place.
 	var visible map[string]bool
 	if !a.showComponents {
 		visible = make(map[string]bool, len(elements))
 	}
 	for _, el := range elements {
-		// The type-level fold (SetShowComponents): large repos drop the
+		// The type-level fold (SetShowComponents): the default drops the
 		// component layer because fit-to-600-nodes zoom hits flow's
 		// minZoom = .1 and the 168×46 cards rasterise into unreadable
-		// specks (PoC-4: 300 nodes already fit at 0.1348). The product
-		// default stays component-level; there is deliberately no
-		// auto-collapse, because the readable/unreadable crossover was
-		// never measured and any node-count threshold would be a guess.
+		// specks (PoC-4: 300 nodes already fit at 0.1348), so spec §12 row
+		// 4 prescribes the Container layer as the default. It is a manual
+		// opt-in only — never an auto-collapse — because the
+		// readable/unreadable crossover was never measured and any
+		// node-count threshold would be a guess.
 		if !a.showComponents && el.Type == model.TypeComponent {
 			continue
 		}

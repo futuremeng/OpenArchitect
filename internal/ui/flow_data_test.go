@@ -10,8 +10,9 @@ import (
 	"github.com/futuremeng/OpenArchitect/internal/core/model"
 )
 
-// newFlowApp 不碰数据库：flowData 只读内存里的图。
-func newFlowApp(t *testing.T) *App {
+// flowFixtureApp 不碰数据库：flowData 只读内存里的图。它不调
+// SetShowComponents，所以拿到的就是 spec §12 的默认折叠态。
+func flowFixtureApp(t *testing.T) *App {
 	t.Helper()
 	elements := []model.Element{
 		{ID: model.SystemID("example.com/x"), Type: model.TypeSystem, Name: "x"},
@@ -28,6 +29,15 @@ func newFlowApp(t *testing.T) *App {
 	}
 	a := NewApp(nil)
 	a.graph = graph.Build(elements, rels)
+	return a
+}
+
+// newFlowApp 是展开 fixture：这批测试写的时候都看着全部 5 个节点和
+// component 级边，所以它显式 opt-in 组件层（默认已是 Container 层）。
+func newFlowApp(t *testing.T) *App {
+	t.Helper()
+	a := flowFixtureApp(t)
+	a.SetShowComponents(true)
 	return a
 }
 
@@ -185,14 +195,47 @@ func TestFlowEdgesSkipsSelfLoop(t *testing.T) {
 	}
 }
 
-// TestFlowDataShowComponentsFilter 钉住 ruling 1：关掉组件层只剩
-// System+Container，碰到隐藏节点的边一并丢掉；flowEdges 本身不过滤。
-func TestFlowDataShowComponentsFilter(t *testing.T) {
-	a := newFlowApp(t)
-	if !a.showComponents {
-		t.Fatal("type-level granularity is the product default: showComponents must start true")
+// TestNewAppDefaultsToContainerLayer 存在的原因：spec §12 门槛表第 4 行在
+// PoC-4 量出「可读性差但性能 OK」后规定的分支就是默认值 —— 新 App 不调
+// SetShowComponents 时只画 System+Container 层，Component 靠开关或双击下钻
+// 进来（300 节点缩放时 168×46 卡片只剩 ~23×6 px）。它刻意绕开 newFlowApp
+// （那是展开 fixture），直接 NewApp，否则默认值翻了也没人守。
+func TestNewAppDefaultsToContainerLayer(t *testing.T) {
+	a := NewApp(nil)
+	a.graph = graph.Build(
+		[]model.Element{
+			{ID: model.SystemID("example.com/x"), Type: model.TypeSystem, Name: "x"},
+			{ID: model.ContainerID("example.com/x/cmd/api"), Type: model.TypeContainer, Name: "api"},
+			{ID: model.ComponentID("example.com/x/internal/basket", "Basket"), Type: model.TypeComponent, Name: "Basket"},
+		},
+		[]model.Relationship{
+			{FromID: model.SystemID("example.com/x"), ToID: model.ContainerID("example.com/x/cmd/api"), Type: model.RelContains, Weight: 1},
+			{FromID: model.ContainerID("example.com/x/cmd/api"), ToID: model.ComponentID("example.com/x/internal/basket", "Basket"), Type: model.RelCalls, Weight: 9},
+		},
+	)
+	data := a.flowData()
+	if len(data.Nodes) != 2 {
+		t.Fatalf("fresh app nodes = %d, want only System+Container (spec §12 row 4 default)", len(data.Nodes))
 	}
-	a.SetShowComponents(false)
+	for _, n := range data.Nodes {
+		if n.ID != model.SystemID("example.com/x") && n.ID != model.ContainerID("example.com/x/cmd/api") {
+			t.Fatalf("Container-layer default emitted node %s", n.ID)
+		}
+	}
+	if len(data.Edges) != 1 || data.Edges[0].Target != model.ContainerID("example.com/x/cmd/api") {
+		t.Fatalf("edges touching the folded Component must be dropped by default, got %+v", data.Edges)
+	}
+}
+
+// TestFlowDataShowComponentsFilter 钉住 ruling 1 的开关契约：折叠态只剩
+// System+Container，碰到隐藏节点的边一并丢掉，展开后 5 个节点全部回来；
+// flowEdges 本身不过滤。折叠就是默认态，所以它不调 SetShowComponents(false)，
+// 由默认折叠 → SetShowComponents(true) 驱动开关。
+func TestFlowDataShowComponentsFilter(t *testing.T) {
+	a := flowFixtureApp(t)
+	if a.showComponents {
+		t.Fatal("a fresh app starts folded: the Container-layer default is what spec §12 row 4 mandates")
+	}
 	data := a.flowData()
 	if len(data.Nodes) != 2 {
 		t.Fatalf("type-level nodes = %d, want only System+Container", len(data.Nodes))
