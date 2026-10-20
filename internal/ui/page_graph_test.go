@@ -40,8 +40,11 @@ func TestGraphOptionsWireCallbacks(t *testing.T) {
 	if opts.Label == "" || opts.EmptyText == "" {
 		t.Fatalf("label/emptyText = %q/%q", opts.Label, opts.EmptyText)
 	}
-	if len(opts.Selected) == 0 && a.selected != "" {
-		t.Fatal("Selected must echo App.selected")
+	// The brief's own tail line here was `len(opts.Selected) == 0 && a.selected != ""`,
+	// which is false on every path (a.selected was just cleared above) — an
+	// assertion that cannot fail. Rebuilt opts is what the page actually uses.
+	if got := a.graphOptions(a.flowData()).Selected; got != "" {
+		t.Fatalf("graphOptions must echo a cleared selection, got %q", got)
 	}
 }
 
@@ -96,7 +99,10 @@ func TestMapHeaderRendersStatusLine(t *testing.T) {
 func TestMapHeaderFoldSwitch(t *testing.T) {
 	a := flowFixtureApp(t) // 默认折叠态
 	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
-	if !tt.HasText("组件层") {
+	// Find is exact-equality (headless.go:443), so this is the caption and not
+	// the switch's own 「展开组件层」 label — HasText("组件层") would be Contains and
+	// would stay green with the caption deleted, matched on the label instead.
+	if _, ok := tt.Find("组件层"); !ok {
 		t.Fatalf("fold caption missing, texts = %v", tt.Texts())
 	}
 	if tt.HasText("Basket") {
@@ -133,7 +139,9 @@ func TestFoldSwitchRefitsCameraAfterUserZoom(t *testing.T) {
 	if z := a.flowState.Zoom(); z != 1 {
 		t.Fatalf("fit zoom for the expanded fixture at 900x600 clamps to the upper bound 1, got %g", z)
 	}
-	// 画布内、所有节点之外的一点：gx = 850-12-相机x 落在图宽之外。
+	// 空白处双击才会 zoom*=2：PointerDown 在 `v.hit(x,y) >= 0` 时直接 return false
+	// （render.go:208），所以只有点不中节点的路径能走到 render.go:235-240 那臂。
+	// 下面 Zoom()==2 那条断言本身就是「这两下没落在任何节点上」的证据。
 	tt.ClickAt(850, 550)
 	tt.ClickAt(850, 550)
 	if z := a.flowState.Zoom(); z != 2 {
