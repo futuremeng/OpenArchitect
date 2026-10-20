@@ -25,12 +25,12 @@ const (
 // commandPalette 由 Task 22 的外壳每帧调用，关闭状态也要跑——
 // CommandDialog 的契约是「每帧都调，用宿主保留的 open 和 state」
 // （components/command/dialog.go:9-14），所以这里不能写成 if a.commandOpen。
-// 每帧那次 store.SearchElements 是只读查询，代价 bounded 在 SQL 的 LIMIT 50 与
-// (snapshot_id, element_id) 主键前缀扫描里
-// （internal/core/store/element.go:24-30）。帧是 demand-driven 的，无人交互时
-// 根本没有帧，空闲期读取次数因此是 0；但 Escape 关闭会保留 query
-// （components/command/command.go:34），所以此后因别的原因产生的每一帧仍会各做
-// 一次这个读取。spec §9.2 禁的是视图写库，这里没有写。
+// 关闭态的帧因此不产 items 消费之外的任何开销：commandItems 的门控
+// （a.commandOpen）让那时根本不发 store.SearchElements 读取，Escape 保留的
+// query（command.go:34）也查不了。打开期间的这次读取是只读查询，代价 bounded
+// 在 SQL 的 LIMIT 50 与 (snapshot_id, element_id) 主键前缀扫描里
+// （internal/core/store/element.go:24-30）；帧是 demand-driven 的，无人交互
+// 时根本没有帧。spec §9.2 禁的是视图写库，这里没有写。
 func (a *App) commandPalette(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyK) {
 		a.SetCommandOpen(true)
@@ -77,7 +77,11 @@ func (a *App) commandItems(query string) ([]command.Item, error) {
 			Keywords:    []string{"impact", "影响", "analysis"},
 		})
 	}
-	if a.db == nil || a.snapshot.ID == "" || strings.TrimSpace(query) == "" {
+	if !a.commandOpen || a.db == nil || a.snapshot.ID == "" || strings.TrimSpace(query) == "" {
+		// 关闭态不查库：Escape 关闭会保留 query（command.go:34），而弹窗的构建
+		// 回调只在打开时运行（dialog.go:27）。门控写在这里而不是 commandPalette，
+		// 是因为关闭时什么都不渲染——只有 commandItems 的返回值能证明这次读取
+		// 被跳过了（调用点侧的门控测不出来）。
 		return items, nil
 	}
 	elements, err := a.db.SearchElements(context.Background(), a.snapshot.ID, query)
@@ -133,6 +137,12 @@ func (a *App) runCommand(id string) {
 			// ErrScanInFlight 在这里不上屏：面板开着就说明用户刚点过扫描，
 			// 侧栏状态行已经是 Scanning 了。
 			_ = a.BeginScan(a.scanRoot)
+		} else {
+			// scanRoot 只在 BeginScan 成功分支里赋值（app.go:89）：一个没配好的
+			// 根目录没有可扫的地方，诚实的出口是把用户带到设置 scan.root 的页面
+			// （Task 15/21），而不是吞掉激活什么都不做——spec §9.1 只点名了
+			// 「扫描当前仓库」这一条。
+			a.SetPage(PageSettings)
 		}
 	case id == commandReposID:
 		a.SetPage(PageRepos)
