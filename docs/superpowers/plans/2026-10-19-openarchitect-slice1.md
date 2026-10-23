@@ -37,6 +37,7 @@ spec §16 留了未决问题，计划必须给出答案才能写出无占位的�
 - 观测为主：不创建 Issue、不触发 CI、不调度 Agent、不写任何外部系统。
 - 所有 SQL 取值只走 `?` 占位 + `Args`。唯一允许的字符串插值是 `PRAGMA user_version = %d`，其参数来自包内常量，不来自输入。
 - 节点卡片尺寸恒定 **168 × 46 DIP**（spec §9.3，由 mygo `docs/ui/performance.md` 的 1000 label = 397 µs/帧推出来）。卡片内只放一个图标 + 两行文本，禁止按钮、进度条、富文本。
+- **连续矢量缩放内节点几何绝不变**，只按 zoom 变绘制密度（LOD）；层级切换（Container ↔ Component）是显式模式切换 + 相机对齐；相机（zoom/pan/layer）持久化到 `app_config` 的 `view.*`，重扫后保持原位。主视图不做列表/board/table 形态，过滤一律 `Muted` 聚光语义（spec §9.0、§9.5）。
 - ID 前缀只能用 `sys:` / `ctn:` / `cmp:`（仓库行用 `repo:`），且不含 snapshot id、不含自增值。
 - 目录与文件名按 spec §5.2（含 `internal/config/config.go` 与 `internal/ui/state.go`）；本计划额外新增的只有：`internal/ui/flow_data.go`、`tools/parseprobe/`、`tools/flowprobe/`、`tools/ciguard/`、`docs/superpowers/poc/2026-10-19-slice1-findings.md`。`README.md` 只在 Task 24 的 Gatekeeper 分支出现。除 `cmd/openarchitect/main.go`（Task 22 从根目录搬过去）外，不新增 spec 没写的主包。
 - 每个任务收尾必须：`go vet ./... && go test ./...` 全绿，然后 `git add` 明确列出的文件 + 一次提交，message 用 `feat:` / `test:` / `chore:` / `docs:` 前缀 + 中文正文。

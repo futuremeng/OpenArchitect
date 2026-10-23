@@ -173,12 +173,12 @@ type Rows       struct { Columns []string; Values [][]any }          // 全量�
 3. 语言探测 `detector.go`：MVP 只判 `go.mod` 存在
 4. SQLite 落库：一次扫描 = 一个 snapshot，单事务写入
 5. 图构建 + 邻居/多跳查询 + 只读影响分析
-6. 桌面 UI：`sidebar` 外壳三页（架构图 / 仓库 / 设置）、`flow` 主视图、单击选中→右侧详情、双击→方法下钻、影响范围模式、`command` 命令面板（Cmd+K）、扫描进度
-7. headless CLI `cmd/oac`：`scan <path>` / `graph <repo-id>` / `impact <element-id> [--depth N]`，与 GUI 共用全部 core
+6. 桌面 UI：`sidebar` 外壳三页（架构图 / 仓库 / 设置）、`flow` 主视图、单击选中→右侧详情、双击→方法下钻、影响范围模式、`command` 命令面板（Cmd+K）、扫描进度、相机与层级记忆（zoom/pan/layer 持久化到 `app_config`，§9.5）
+7. headless CLI `cmd/oac`：`scan <path>` / `graph <repo-id>` / `impact <element-id> [--depth N]` / `context <repo>`（markdown 架构摘要，供 agent 上下文注入），与 GUI 共用全部 core。`graph`/`impact`/`context` 支持 `--json`，输出 schema 按对外契约对待（切片 7 的 agent 子系统与外部工具都消费它，比 GUI 更怕漂移）
 
 ### 4.2 排除（各需自己的 spec）
 
-其他语言 adapter · 特性抽取（Git log / PR / Issue → Feature）· `features`/`commits` 表 · GitHub/GitLab API · 多仓库图合并（`Graph.Merge` 留签名不实现）· 快照对比视图 · Webhook 服务 · OpenTelemetry · `ui/web/architecture-map`（React Flow 备用路线）· 架构元素手工标注 · Windows/Linux 打包验证
+其他语言 adapter · 特性抽取（Git log / PR / Issue → Feature）· `features`/`commits` 表 · GitHub/GitLab API · 多仓库图合并（`Graph.Merge` 留签名不实现）· 快照对比视图 · Webhook 服务 · OpenTelemetry · `ui/web/architecture-map`（React Flow 备用路线）· 架构元素手工标注 · Windows/Linux 打包验证 · 智能体子系统（切片 7，见 `2026-10-23-openarchitect-agent-harness-design.md`；本切片的 CLI 只读输出是它的全部接口面）
 
 ### 4.3 完成定义（DoD）
 
@@ -189,7 +189,8 @@ type Rows       struct { Columns []string; Values [][]any }          // 全量�
 3. 打开"影响范围"开关 → 选中节点 2 跳之外的节点全部淡出（`Muted`）；
 4. `oac scan <path>` 无 GUI 产出同一份数据，`oac impact <id> --depth 2` 的节点集合与 GUI 影响范围模式**完全一致**（这是 core/UI 解耦的验收手段）；
 5. `go vet ./...` 与 `go test ./...` 全绿；
-6. core 包不 import 任何 UI 包，由 CI 检查强制（§5.1）。
+6. core 包不 import 任何 UI 包，由 CI 检查强制（§5.1）；
+7. 出图后再次扫描，图视图相机保持原位；若 PoC-4 证明 `flow.State` 不保持跨数据更新的 zoom/pan，退化为 `Reveal` 到记忆锚点节点（§9.5）。
 
 ---
 
@@ -223,6 +224,8 @@ go list -deps ./internal/scanner/... ./internal/core/model/... ./internal/core/g
 ```
 
 这条规则是**逃生通道**：若 §12 PoC-4 证明 `flow` 扛不住真实节点量，B 路线（WebView + React Flow）只替换 `internal/ui`，core 与其测试不动。附带收益：core 无需 GUI 即可测试。
+
+依赖方向图与 R1–R3 同时写进 README，作为对贡献者（含 agent）的公开契约：先对齐分层再动手，违规由 CI 拒绝而不是靠 code review 记忆。
 
 ### 5.2 目录结构
 
@@ -425,7 +428,7 @@ func (d *DB) ConfigGet/ConfigSet(ctx context.Context, key string) (string, error
 
 库文件路径：GUI 用 `mygo.App.Path(mygo.PathUserData)` + `openarchitect.db`；`cmd/oac` 默认同一路径，`--db` 覆盖（测试用 `t.TempDir()`）。
 
-schema 版本：用 SQLite 内建 `PRAGMA user_version`，从 1 起递增，`Migrate` 按版本号分支。`app_config` 只存用户配置，不承担版本语义。
+schema 版本：用 SQLite 内建 `PRAGMA user_version`，从 1 起递增，`Migrate` 按版本号分支。`app_config` 只存用户配置与视图状态，不承担版本语义；key 用两个前缀区分：`config.*`（用户配置，如影响分析 `maxDepth`）与 `view.*`（视图状态，如图相机，§9.5），value 一律 JSON 字符串。
 
 ---
 
@@ -477,6 +480,15 @@ CLI 打印成两张表；GUI 把它转成 `Muted` 集合喂给 `flow`。UI 上"�
 
 ## 9. UI
 
+### 9.0 交互范式约束（负面清单）
+
+主视图是**可矢量缩放的全景画布**（相机模型：pan / zoom / `Reveal`），不是列表产品。C4 三层（§6.3 的 System → Container → Component）天然就是三级语义缩放——缩放级别与抽象级别一一对应，这是让架构模型可读的唯一自然方式。以下形态明确排除，防止后续切片滑回列表语义：
+
+- 主视图不做列表 / board / table 形态；「仓库」页是管理页，不是浏览页。
+- 过滤与分析一律用**聚光语义**（`Muted` 淡出、边变细、层级显隐），不做「筛出剩余集合」——空间记忆不可破碎。
+- 导航是**相机移动**（`Reveal`、缩放、层级切换 + 下钻面包屑），不是翻页路由；详情面板里的上下游条目是「跳到图上」的动作，不是列表跳列表。
+- 详情面板是图的从属注解（`Split` 右侧、固定宽度），不是换屏抽屉。
+
 ### 9.1 外壳与页面
 
 `shells/sidebar` 单窗口，页面：`架构图`（默认）、`仓库`、`设置`。`command` 组件实现 Cmd+K 面板，条目 = 「扫描当前仓库」「跳到仓库/设置」「搜索元素（`store.SearchElements`）」「以 X 为中心的影响分析」。侧栏底部一个扫描按钮 + 状态行。
@@ -494,11 +506,21 @@ type App struct {
     impactMode bool                // 影响范围开关
     impact     *graph.ImpactReport
     flowState  flow.State          // 每图一份，按 views.md 归应用持有
+    layer      string              // "container" | "component"，语义缩放层级（§9.5）
+    camera     Camera              // 全景记忆：zoom + 锚点 + 层级，持久化到 app_config（§9.5）
     cancel     context.CancelFunc
+}
+
+// state.go
+type Camera struct {
+    Zoom   float32
+    Anchor string  // 相机中心对准的 element id，'' = Fit
 }
 ```
 
 视图函数是 `App` 的纯函数，只读字段、不写库、不起 goroutine；写状态只发生在两处 —— 输入回调（主线程）与 `win.Update`（跨线程）。
+
+状态树按持久化语义分四类：`status/progress` 瞬态，不落盘；`repos/snapshot/graph` 是数据，可从 SQLite 重建；`selected/impact/layer` 是会话态；`camera` 是视图状态，防抖写入 `app_config` 的 `view.*`（§9.5）。瞬态与视图状态永不混进同一字段。
 
 ### 9.3 flow 用法
 
@@ -514,7 +536,7 @@ flow.View(c, &app.flowState, data, flow.Options{
 })
 ```
 
-- `Node.Content` = `nodeCard(c, el)`：**一个 Lucide 图标 + 类型名一行 + 包名一行**。图标按 `ElementType` 三选其一。这是 §2.1 性能基线推出来的硬约束 —— flow 每帧重建每张卡片，1000 静态 label 已花 397 µs，卡片里塞按钮、进度条或多行富文本会把帧时间推到几十毫秒。
+- `Node.Content` = `nodeCard(c, el)`：**一个 Lucide 图标 + 类型名一行 + 包名一行**。图标按 `ElementType` 三选其一。这是 §2.1 性能基线推出来的硬约束 —— flow 每帧重建每张卡片，1000 静态 label 已花 397 µs，卡片里塞按钮、进度条或多行富文本会把帧时间推到几十毫秒。`Content` 内部按 `flowState.Zoom()` 做 LOD 分级绘制（§9.5）。
 - **卡片尺寸必须恒定**：`Width/Height` 显式给定，不让 `Content` 自然测量。flow 在测量尺寸变化时会重排（"laying the diagram out again when that size changes"），否则文本长度差异会让图逐帧抖动。超长包名中间截断。
 - 边：`Edge.Label` = 关系类型；`depends_on` 用 `Dashed: true`，`calls` 用实线 + `Width: 1 + min(3, weight/8)` 让强依赖更粗。
 - `Group`：`flow` 没有 `Group` 字段（那是 `graph` 的），聚类改由图标 + 卡片第二行的包名承担。
@@ -522,7 +544,22 @@ flow.View(c, &app.flowState, data, flow.Options{
 
 ### 9.4 详情面板
 
-`Split` 右侧抽屉，宽度固定；数据源 = `Elements`/`Relationships` + `Neighbors`。展示：类型名、`ElementType`、包路径、**所属 Container 集合**（从 `contains` 边反查，承载 §6.3 的多归属歧义）、`file_path`（点击用 `mygo.Shell` 打开所在文件）、doc comment、导出方法列表（来源见 §16 U3）、直接上游、直接下游。后两类的条目可点击 → `app.selected = id` + `flowState.Reveal(id)`。
+`Split` 右侧抽屉，宽度固定；数据源 = `Elements`/`Relationships` + `Neighbors`。展示：类型名、`ElementType`、包路径、**所属 Container 集合**（从 `contains` 边反查，承载 §6.3 的多归属歧义）、`file_path`（点击用 `mygo.Shell` 打开所在文件）、doc comment、导出方法列表（来源见 §16 U3）、直接上游、直接下游。后两类的条目可点击 → `app.selected = id` + `flowState.Reveal(id)`。注意这是「跳到图上」，不是列表跳列表（§9.0）。
+
+### 9.5 缩放层级、LOD 与相机
+
+**两种缩放，机制不同，不可混为一谈：**
+
+- **连续矢量缩放**（`flow.State` 的 `Zoom/ZoomIn/ZoomOut/Fit` 区间内）：节点几何绝不变（§9.3 定死尺寸的约束——flow 在尺寸变化时重排，否则逐帧抖动），只变**绘制密度**。`Node.Content` 读 `flowState.Zoom()` 分级：远端只画色块 + 类型图标（一次 fill，比三行文本便宜得多，直接回应 §2.1 的 397 µs/1000 label 基线），中距画类型名 + 包名，近端可加第三行辅助信息；边 `Label` 低于阈值隐藏，只留颜色与虚线样式。
+- **语义缩放（层级切换）**：Container 视图 ↔ Component 视图是**显式模式切换**——重排一次布局，随后相机对准切换前的焦点节点。这是一等导航机制，不只是 PoC-4 可读性不利时的兜底；`App.layer` 记录当前层级，下钻面包屑（System › repo › pkg）就是它的呈现。
+
+**相机是一等状态**：`App.camera`（zoom + 锚点）与 `App.layer` 合并成一个 JSON 持久化到 `app_config` 的 `view.graph.<repoID>`，防抖写入（约 150 ms，不逐帧写库）。扫描完成触发重布局后相机不得跳回原点——`flow.State` 归应用持有正是为此。`flow.State` 的 zoom/pan 能否外部设定、能否跨数据更新保持，由 PoC-4 实测（§12）；若不可设定，退化为「重扫后 `Reveal` 到记忆锚点」。
+
+**动效是一次性标志**：扫描完成的新节点淡入、层级切换的过渡，用「置标志 → 下一次渲染读取打标 → 立即清空」的一次性标志驱动，只播一次。mygo 每帧重绘的模型下，「渲染即动效」会逐帧重放，必须杜绝。
+
+**Minimap（stretch）**：600 节点放大后必然迷失。`flow` 无内建 minimap，但 `State.Position(id)` 足够在 `Overlay` 里自绘点阵 + 视口矩形。切片 1 可不做，切片 2（多仓合并图）前必须有。
+
+**扫描加载态**：切片 1 用 `Progress` + 状态行（§10）；画布式加载（节点团块逐个点亮）是后续改进。
 
 ---
 
@@ -569,7 +606,7 @@ core 不 import UI（R1），所以是真实单元测试，不是快照测试。
 | 1 | `mygo init -template native` 骨架里 `go get` onevra，`go tool mygo dev` 能否起窗口 | 骨架手搭（`go mod init` + `mygo.json` 照 onevra `source/mygo.json` 抄），或降级 `go run .` 不做打包 |
 | 2 | native app 中 `sqlite.Open` 成功，且 `go tool mygo build` 后 `sqlite.LibraryPath()` 在 .app 内能找到预编译库 | 换 `modernc.org/sqlite`（纯 Go 转译，慢但零二进制）。替换面被 §7.2 的 `*DB` 包装层与 `rows.go` 完全吸收：`store` 的公开方法签名不变，上层无感。此时 R1 的驱动例外条款作废，改为允许 `modernc.org/sqlite` |
 | 3 | 真实仓库（300~600 导出类型）上 `go/packages` 的耗时与峰值内存 | >60s 或 >2GB → 加包级预筛、或只加载模块自身包（`NeedDeps` 收窄）；这条数字同时回填 §6.4 的规模预期 |
-| 4 | flow 在 300 / 600 节点的帧时间与可读性 | 不可用 → 走逃生通道切 WebView + React Flow（只换 `internal/ui`）；可读性差但性能 OK → 默认只画 Container 层，Component 靠双击下钻 |
+| 4 | flow 在 300 / 600 节点的帧时间与可读性；顺带实测 `flow.State` 的 zoom/pan 是否跨数据更新保持、能否外部设定，`Position(id)` 是否够自绘 minimap（§9.5） | 不可用 → 走逃生通道切 WebView + React Flow（只换 `internal/ui`）；可读性差但性能 OK → 默认只画 Container 层，Component 靠双击下钻；相机不可保持 → 相机恢复退化为 `Reveal` 记忆锚点 |
 | 5 | 单 `Transaction` 塞 2100 条 `Statement` | 过慢/失败 → 分块提交（每 200 条一批）+ `Savepoint` 语义自己实现，牺牲 W2 的原子性；此时必须补一条"半成品快照不可见"的规则 |
 | 6 | `Select` → 抽屉 + `Muted` 淡出是否足以表达影响范围 | 不够 → 退化为"影响分析只在 CLI/表格里看"，图保持纯浏览 |
 | 7 | 无签名 .app 本地能否运行（Gatekeeper） | 只影响分发，不阻塞切片；必要时 `xattr -d com.apple.quarantine` 写进 README |
@@ -623,6 +660,7 @@ go tool mygo build
 | 4 | 手工标注架构元素（把偏差 8 砍掉的 `Owner`/`TechStack`/`Metadata` 加回来，此时字段语义有数据来源了）+ Webhook（Orca/Paperclip 协作） | `app_config` 与 store 写路径 |
 | 5 | 非 Go 语言 adapter（TS/JS、Python、Java、Rust），全部 sidecar 子进程 | `LanguageAdapter` 接口 |
 | 6 | 三平台打包、签名公证、GitHub Actions 发布、自动更新 | `mygo.json`、PoC-7 |
+| 7 | 智能体子系统：**分析 agent 为主**（进程内 covonaut，只读工具 = core 查询）+ 变更 rollout 为辅（CLI substrate，harness2 式递归）。草案已立：`2026-10-23-openarchitect-agent-harness-design.md` | 切片 1 的 core 与 `oac --json`/`context`；切片 2 的快照 diff；切片 3 的 Feature |
 
 ---
 
