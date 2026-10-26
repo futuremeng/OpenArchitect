@@ -43,13 +43,14 @@
 
 1. **多仓管理**：`repos` 表已有多行能力，补 GUI 仓库页（列表/添加/删除/逐仓扫描/全部重扫）与 CLI（`oac repo list|remove`，添加=对路径 `oac scan`）。mygo 无目录选择器 → 添加走路径文本输入 + 存在性与 `go.mod` 校验。
 2. **合并图**：实现 `Graph.Merge`——多仓最新快照的并集图；GUI 架构图页加仓库过滤器（多选，含"全部"），选择持久化到 `app_config`。
-3. **source hash**：新表 `arch_files`，每快照记录每个被解析文件的 SHA-256。同时服务 `oac verify` 与增量。
-4. **增量扫描**：Merkle 包指纹（§6），默认增量、`--full` 强制全量。正确性红线：增量结果与全量**逐字节一致**（§11 平价测试）。
-5. **快照对比**：core 层 `DiffSnapshots(a, b)`（§8）+ CLI `oac diff` + GUI 对比着色模式。
-6. **元素历史**：新表 `element_history`，扫描时对新旧快照做 diff 落事件；CLI `oac history <element-id>`；GUI 抽屉加"历史"段。
-7. **`oac rank --by dependents`**：load-bearing 排序（直接入度，graph 层顺手实现）。
-8. **minimap（降级版）**：点阵 + 点击 `Reveal` + 选中/影响集高亮（§2 推论）。
-9. **`oac verify`**：存储 hash vs 磁盘 hash，输出 `clean / stale` 与 stale 文件清单（Ix §3.3 的两值简化版——`diverged` 三值裁决需要"图中节点 vs 重解析"，本切片不产，见 §6.4）。
+3. **扫描器跨仓边持久化**（观察库实测倒逼，见 `poc/2026-10-26-observation-corpus.md`）：现扫描器 `ownPackage` 过滤把一切非本模块端点的边在落库前丢弃（OpenCourt→OpenLaw 悬空边实测 0 条）。改为保留**非 stdlib 且非测试变体**的跨模块边（悬空存库，`from_id/to_id` 无 FK，schema 零改动）；单仓视图按端点在场性过滤（现行为不变），合并视图因此真的有边可并。第三方库（mygo/onevra 等）的边一并保留——它们未扫描时在场性过滤自动隐藏，但 `oac context` 与切片 5 的"外部依赖面"统计需要这份原始数据。
+4. **source hash**：新表 `arch_files`，每快照记录每个被解析文件的 SHA-256。同时服务 `oac verify` 与增量。
+5. **增量扫描**：Merkle 包指纹（§6），默认增量、`--full` 强制全量。正确性红线：增量结果与全量**逐字节一致**（§11 平价测试）。
+6. **快照对比**：core 层 `DiffSnapshots(a, b)`（§8）+ CLI `oac diff` + GUI 对比着色模式。
+7. **元素历史**：新表 `element_history`，扫描时对新旧快照做 diff 落事件；CLI `oac history <element-id>`；GUI 抽屉加"历史"段。
+8. **`oac rank --by dependents`**：load-bearing 排序（直接入度，graph 层顺手实现）。观察库基线：OpenLaw `store.DB` 入度 20 全库最高。
+9. **minimap（降级版）**：点阵 + 点击 `Reveal` + 选中/影响集高亮（§2 推论）。
+10. **`oac verify`**：存储 hash vs 磁盘 hash，输出 `clean / stale` 与 stale 文件清单（Ix §3.3 的两值简化版——`diverged` 三值裁决需要"图中节点 vs 重解析"，本切片不产，见 §6.4）。
 
 ### 3.2 排除（各需自己的 spec）
 
@@ -144,8 +145,11 @@ fp(P)              = H( sort(P 内第一方文件的 (path, H(content)))
   有意修订：并集运算 N 路一次做完更直接，调用方只有 App 与 CLI，改形成本可控，
   记录为对"调用方不必改形"承诺的一处偏差）。
 - 并集：元素按 `element_id` 去重（稳定 ID 是 pkgpath 制，跨仓对齐是设计根基，
-  PoC-8 钉它）；边保留当且仅当两端都在并集内（单仓视图里被过滤的外部边，
-  在合并视图里因对方仓库在场而复活——这是跨仓边的全部来源，扫描器不改）。
+  PoC-8 钉它）；边保留当且仅当两端都在并集内。**前提**：跨仓边必须先落库
+  （§3.1 第 3 项的扫描器修正——观察库实测原稿"外部边会被复活"的说法不成立，
+  旧扫描器根本不存悬空边；本条按实测重写）。
+- 跨仓边的端点在场性对**第三方未扫描库**（mygo/onevra 等）自动隐藏，但数据
+  已在库中：`oac context` 的"外部依赖面"与切片 5 的 adapter 优先级都吃这份数据。
 - 冲突规则：同一 `element_id` 出现在两仓快照（vendored/复制代码）→ 归属
   **模块路径最长前缀**的一方；平局取仓库选择顺序靠前者并记 warning。
 - 快照选择：合并图 = 每个选中仓库的 `LatestSnapshotID`。跨快照混合（A 用今天、
@@ -208,7 +212,7 @@ fp(P)              = H( sort(P 内第一方文件的 (path, H(content)))
 
 | # | 验证 | 失败分支 |
 |---|---|---|
-| PoC-8 | 双仓 fixture（`replace` 指向本地）扫描后跨仓边存在且 ID 逐字对齐 | `replace` 不生效（proxy 副本对齐失败）→ 文档化 `go.work` 指引；ID 结构性错位才回炉 ID 方案 |
+| PoC-8 | 双仓 fixture 扫描后跨仓边存在且 ID 逐字对齐；**观察库真仓复跑**：OpenCourt `go.mod` 已带 `replace ../OpenLaw`（`poc/2026-10-26-observation-corpus.md`），fixture 之外再用真仓对钉一遍 | `replace` 不生效（proxy 副本对齐失败）→ 文档化 `go.work` 指引；ID 结构性错位才回炉 ID 方案 |
 | PoC-9 | 增量在 onevra 上：平价测试绿 + 墙钟收益 ≥20% | 收益不足 → 停用复用路径（默认 full），hash/指纹/verify 保留；平价不绿 → 增量整体禁用，切片 2 其余照常 |
 | PoC-10 | minimap：Overlay 内自绘点阵可点击命中并 `Reveal` | Overlay 命中被 flow 吞 → minimap 移出 `flow.View` 成独立小面板（`Position(id)` 跨帧可用，state 在手） |
 | PoC-11 | 合并图 ≥600 节点（多仓）首帧与可读性 | 帧时间崩 → 默认仅 Container 层 + 过滤器收窄；仍崩 → 切片 1 逃生通道（WebView+React Flow）只换 `internal/ui` |
