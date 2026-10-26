@@ -335,9 +335,11 @@ type Relationship struct {
 | `depends_on` | A 所在文件中，`types.Info.Uses[ident]` 解析到 `*types.TypeName` 且其对象是另一个 Component B 的类型 → `A depends_on B`。方向 = 使用方指向被使用方 |
 | `calls` | A 所在包的方法体内 `*ast.CallExpr` 的被调函数解析到 `*types.Func`，其 receiver 基类型是另一 Component B → `A calls B`。接口方法调用记录到接口类型本身（静态解析终点），不做动态分派猜测 |
 
+**位置归属的补集**（实现期补，出处见下）：源码位置落在**包级函数**（非任何组件的方法）体内时，`depends_on` 与 `calls` 都退给「同文件内最近的前置组件声明」作主语；该文件里没有前置组件，则这段代码不产边。这条不是 §6.4 原表覆盖的情形，是实现里必须有的一条兜底——把它写在这里，是为了让 golden 冻结的是明确规则而不是巧合。出处：计划 Task 10 的 controller 裁决（`testdata/fixtures/shared-lib/core/core.go` 的 `Snapshot` 就是钉这条兜底的 fixture）。
+
 **去重与多重性**：同一 `(from, to, type)` 合并为一条边，`Weight` 累加出现次数。自环（同包内两个类型之间）保留但 UI 不渲染为边，只在详情面板的"包内耦合"计数里显示 —— 力导向/分层布局对自环都处理得不好。
 
-**规模预期**（决定 §9 的性能约束）：200~600 个 Component、1000~2000 条边是一个中等 Go 仓库的量级。这个预期在 §12 PoC-3 变成实测数字，实测超 800 节点则加包级预筛（把非 handler/service/client/store 命名后缀的类型折叠进"包"节点）。
+**规模预期**（决定 §9 的性能约束）：200~600 个 Component、1000~2000 条边是一个中等 Go 仓库的量级。这个预期在 §12 PoC-3 变成实测数字，实测超 800 节点则加包级预筛（把非 handler/service/client/store 命名后缀的类型折叠进"包"节点）。PoC-3 实测（2026-10-19，`go/packages` 全串 LoadMode）：mygo 模块（108 包）自身包导出 named struct/interface 类型 519 个、onevra `source`（29 包）138 个（均含 main 包类型，是 §6.3 口径下 Component 数的上界）——"200~600"对百包级仓库成立，更小仓库按包数线性走低，未触发 800 节点预筛分支。
 
 ---
 
@@ -373,11 +375,12 @@ CREATE TABLE IF NOT EXISTS arch_elements (
     description TEXT NOT NULL DEFAULT '',
     repo_id TEXT NOT NULL,
     file_path TEXT NOT NULL DEFAULT '',
+    methods_json TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (snapshot_id, element_id)
 );
 CREATE INDEX IF NOT EXISTS idx_elements_repo ON arch_elements(repo_id);
 CREATE INDEX IF NOT EXISTS idx_elements_name ON arch_elements(name);
-CREATE INDEX IF NOT EXISTS idx_elements_type ON arch_elements(element_id);
+CREATE INDEX IF NOT EXISTS idx_elements_element ON arch_elements(element_id);
 
 CREATE TABLE IF NOT EXISTS arch_relationships (
     snapshot_id TEXT NOT NULL REFERENCES architecture_snapshots(id) ON DELETE CASCADE,
@@ -395,6 +398,8 @@ CREATE TABLE IF NOT EXISTS app_config (
     value TEXT NOT NULL
 );
 ```
+
+本 DDL 与已提交的 `internal/core/store/schema.go` 逐字对齐，两处修正是有意为之而非笔误：`arch_elements.methods_json` 一列来自计划修正案 1（§16 U3 选定选项 (a)，扫描时写入导出方法名）；索引名由原文 `idx_elements_type` 更正为 `idx_elements_element`（该索引建在 `element_id` 上，原名与自身目标列矛盾）。
 
 相对源文档 5.1 的改动：删 `elements_json`/`relationships_json`（偏差 5）、删 `features`/`commits`（偏差 7）、删 `arch_elements.id` 自增主键与 `metadata_json`/`tech_stack`/`owner`（偏差 8）、`repos` 去 `url`/`branch`（偏差 9）、`package_errors_json` 新增（承载 §10 的部分失败）、`weight` 新增（承载 §6.4 的多重性）。
 

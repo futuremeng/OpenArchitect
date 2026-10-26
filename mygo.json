@@ -1,5 +1,6 @@
 {
   "name": "OpenArchitect",
+  "main": "./cmd/openarchitect",
   "identifier": "com.futuremeng.openarchitect",
   "version": "0.1.0",
   "out": "build"

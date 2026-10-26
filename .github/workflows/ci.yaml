@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    # runner 必须是 macOS：存储驱动走 mygo/plugins/sqlite 随包附带的预编译库，
+    # PoC-2 只在 darwin/arm64 上验过（Task 2），换 ubuntu 会红在 store 那批测试上，
+    # 而且和交付平台不一致。UI 测试用 mygo 的内存渲染器（ui.NewTester），不需要显示器。
+    #
+    # 没有 -race 步骤：竞态检测器要求 cgo，和本 job 的 CGO_ENABLED=0 冲突。
+    # 这不是放弃 race 覆盖——Task 21/22/24 的收尾命令都带 -race，那一遍显式写
+    # CGO_ENABLED=1（全局约束里的唯一例外），是本地必跑的一遍。
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.2"
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./...
+      # 三条守卫查的是**直接 import**（-f '{{join .Imports}}'）而不是 -deps 传递闭包，
+      # 这是对 plan Task 23 命令的定稿修正，证据（mygo v0.5.5 实测）：
+      #   plugins/sqlite/sqlite.go:27 与 library.go:18 直接 import github.com/egoist/mygo
+      #   （root），root 又 import 整套 UI 栈（internal/darwin、surface 等）。
+      # 而 spec §5.1 要求 scanner 收 *store.DB 参数、oac 读库，二者必然 import store，
+      # store 必然 import 被授权的 plugins/sqlite——所以 -deps 闭包在任何合法架构下
+      # 都必然命中 mygo root。spec 禁的是「import」（直接导入），命令与语义必须一致。
+      - name: R1 core 与 scanner 不依赖 UI 栈
+        run: |
+          go list -f '{{join .Imports "\n"}}' ./internal/core/... ./internal/scanner/... \
+            | grep -x -E 'github.com/egoist/mygo|github.com/egoist/mygo/ui|github.com/oneo-me/onevra[^ ]*' \
+            && exit 1 || true
+      - name: R1 反向 驱动只准出现在 store
+        run: |
+          go list -f '{{join .Imports "\n"}}' ./internal/scanner/... ./internal/core/model/... ./internal/core/graph/... \
+            | grep -x 'github.com/egoist/mygo/plugins/sqlite' && exit 1 || true
+      - name: DoD-4 oac 不含 UI 依赖
+        run: |
+          go list -f '{{join .Imports "\n"}}' ./cmd/oac \
+            | grep -x -E 'github.com/egoist/mygo|github.com/egoist/mygo/ui|github.com/oneo-me/onevra[^ ]*' \
+            && exit 1 || true
