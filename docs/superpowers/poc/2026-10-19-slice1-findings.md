@@ -467,26 +467,34 @@
 
 | DoD | 结果 | 证据 |
 |---|---|---|
-| 1 出图 ≤60 s | 未验（GUI 按钮→首帧计时需人眼） | 佐证：同源 core 的 CLI 全链路 `oac scan`（解析+写库）real = **1.95 s** ≪ 60 s；场景 (a) 读库+建图路径单测全覆盖 |
-| 2 抽屉五件套 + Reveal | 未验（目检项） | 单测已钉语义（`TestDetailMethodsHeaderClickExpands`、`TestNeighbourChipJumpsToThatElement`）；`Reveal` 落视口与 Finder 联动待肉眼 |
-| 3 影响范围淡出 | 未验（目检项） | `Muted` 映射有单测；PoC-6 三条判断（可辨识度/边跟随淡出/2 跳深浅）待肉眼 |
-| 4 CLI 与 GUI 同源 | PASS（机器半边） | `TestCLIAndLibraryAgree` PASS；`/tmp/oac impact cmp:…components.DialogOptions --depth 2`（默认库）= **Upstream 2 / Downstream 0**——GUI 抽屉同元素同深度必须报这两个数（GUI 半边待肉眼） |
+| 1 出图 ≤60 s | PASS（机器） | 场景 (b) 同源 core 的 CLI 全链路 `oac scan`（解析+写库）real = **1.95 s** ≪ 60 s；场景 (a) 探针 `TestDoDProbeRealDB` 实测开库+Reload+首帧 `flowState.Ready`（"每个节点都被测量、布局并显示"，flow.go:92）147 元素合计 **0.07 s** ≪ 2 s，余量 28 倍。人眼计时降级为可选抽查 |
+| 2 抽屉五件套 + Reveal | PASS（机器+单测）；Finder 联动待肉眼 | 五件套在真实数据上探针钉死：名称、`Component` 徽章、包路径、`components/breadcrumbs.go`、导出方法折叠（"导出方法（N）"+"还有 N 个，点标题展开"）、直接上游/下游 chip；Reveal 落视口：Tab 挪开镜头（焦点跟随）→ `Reveal` → 卡片中心 (605, 291) 落在视口中央带（30%–70%）。语义接线另有单测（`TestDetailMethodsHeaderClickExpands`、`TestNeighbourChipJumpsToThatElement`）；Finder 打开文件是 OS 集成，探针不代答 |
+| 3 影响范围淡出 | 未验（目检项） | `Muted` 映射有单测；PoC-6 三条判断（可辨识度/边跟随淡出/2 跳深浅）是审美判断，只有人眼能答 |
+| 4 CLI 与 GUI 同源 | PASS | `TestCLIAndLibraryAgree` PASS；`/tmp/oac impact cmp:…components.DialogOptions --depth 2`（默认库）= **Upstream 2 / Downstream 0**；GUI 半边探针钉死：抽屉渲染文本「上游 2 个，下游 0 个，深度 2 跳」与 CLI 逐字一致 |
 | 5 vet + test | PASS | `CGO_ENABLED=0 go vet ./...` + `go test ./...` 全绿（9 包）；`CGO_ENABLED=1 go test -race` ui 29.0 s / store 1.5 s 干净 |
 | 6 core 不 import UI（CI 强制） | PASS | ciguard 5 测试（含三条命令断言）本地全绿；三条 `go list` 守卫本机 `R1 ok` / `driver confined` / `oac headless`；`ci.yaml` 就位未 push |
 | PoC-2 打包态 | PASS（机器半边） | `go tool mygo build` 20.8 s 产出 `OpenArchitect.app` 14.3 MB；bundle 内 `Contents/Resources/libmygo-sqlite3.dylib` 1.5 MB；`open` 后进程存活（加载库失败会在启动即 `log.Fatalf`）；「打包版里能扫描出图」待肉眼 |
 | PoC-7 Gatekeeper | PASS（未被拦） | 本地构建无 `com.apple.quarantine`（仅 provenance）+ ad-hoc 签名 `com.futuremeng.openarchitect`；`open` 直接起。README 分支未触发，不建 README |
 
+- 验收探针：`internal/ui/dodprobe_test.go`（`TestDoDProbeRealDB`，env 门控默认
+  skip，与 `tools/flowprobe` 同类，不进 CI 常规路径）。跑法：
+  `OAC_DOD_DB="$HOME/Library/Application Support/OpenArchitect/openarchitect.db"
+  go test ./internal/ui/ -run TestDoDProbeRealDB -v`。只读库，跑完不改状态。
+  探针顺带钉出一条组件行为事实：`reveal` 只挪 `camera`，渲染层 `shown` 靠动画
+  追赶（render.go:159，仅 `reduceMotion` 同步）——headless 下必须
+  `Tester.Advance` 过动画时长再断言，否则拍到中间帧（首跑 cy=196 即此因）。
+  Reveal 靶子用 `BreadcrumbsControl` 而非 `DialogOptions`：`Find`/`HasText`
+  是子串语义，`DialogOptions` 会被 `AlertDialogOptions` 污染。
 - 数据一致性：`~/Library/Application Support/OpenArchitect/` 只有一份
   `openarchitect.db`（打包版与 dev 版同库，`App.SetName` 与 `mygo.json` 对上了）。
 - plan 的两处口径修正：① parity 测试实际名 `TestCLIAndLibraryAgree`
   （plan 的 `-run Parity` 匹配不到）；② plan 示例 ID `components.Dialog` 在
   onevra 图里不存在（只有 `DialogOptions`/`AlertDialogOptions`），验收改用
   `DialogOptions`。
-- 待人眼清单（对着已打开的打包版窗口做）：
-  1. DoD-1(a)：窗口出现 → 首帧出图 ≤2 s（库里已有快照）；
-  2. DoD-2：单击 `DialogOptions` 节点 → 抽屉五件套 + 点上游 chip Reveal 落视口 +
-     文件路径点开进 Finder；
-  3. DoD-3/PoC-6：开「影响范围」开关 → 中心+2 跳外淡出，回答三条判断；
-  4. DoD-4 GUI 半边：抽屉「影响范围」行必须报 上游 2 / 下游 0（深度 2）；
-  5. DoD-1(b)（可选，破坏性）：删库重扫计时 ≤60 s——做完从 `.bak` 恢复。
+- 待人眼清单（对着已打开的打包版窗口做，只剩审美与 OS 集成）：
+  1. DoD-3/PoC-6：开「影响范围」开关 → 中心+2 跳外淡出，回答三条判断
+     （淡出后仍可辨识？边跟随淡出？2 跳深浅可理解？）；
+  2. DoD-2 尾巴：点文件路径 → 真的进 Finder（OS 集成，探针不代答）；
+  3. （可选，破坏性）DoD-1(b)：删库重扫计时 ≤60 s——做完从 `.bak` 恢复；
+  4. （可选抽查）真实窗口首帧观感——机器侧 0.07 s，理论上不可能超 2 s。
   全过 → 本表补 PASS 行并提交「切片 1 完成」；任何一条不过 → 按 plan 停下报告。
