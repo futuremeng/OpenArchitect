@@ -18,7 +18,7 @@ func TestGraphOptionsWireCallbacks(t *testing.T) {
 	opts := a.graphOptions(data)
 	target := model.ComponentID("example.com/x/internal/basket", "Basket")
 
-	if opts.Selected != "" || opts.Direction != flow.LeftToRight {
+	if opts.Selected != "" || opts.Direction != flow.LeftToRight || opts.Navigation != flow.NavigationMap {
 		t.Fatalf("opts = %+v", opts)
 	}
 	if opts.NodeGap != 28 || opts.RankGap != 64 {

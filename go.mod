@@ -18,3 +18,5 @@ require (
 )
 
 tool github.com/egoist/mygo/cmd/mygo
+
+replace github.com/oneo-me/onevra/source => github.com/futuremeng/onevra/source v0.2026.13-0.20261026124152-70c837f0421e

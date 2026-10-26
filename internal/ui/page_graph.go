@@ -32,16 +32,17 @@ func (a *App) graphPage(c *ui.Context) {
 // tester cannot click through. This is where DoD-2's wiring lives.
 func (a *App) graphOptions(data flow.Data) flow.Options {
 	return flow.Options{
-		Label:     fmt.Sprintf("%d 个元素，%d 条关系", len(data.Nodes), len(data.Edges)),
-		EmptyText: "还没有扫描过任何仓库",
-		Direction: flow.LeftToRight,
-		Selected:  a.selected,
-		Select:    a.Select,
-		Open:      a.Open,
-		NodeGap:   28,
-		RankGap:   64,
-		Empty:     emptyGraph,
-		Overlay:   a.zoomControls,
+		Label:      fmt.Sprintf("%d 个元素，%d 条关系", len(data.Nodes), len(data.Edges)),
+		EmptyText:  "还没有扫描过任何仓库",
+		Direction:  flow.LeftToRight,
+		Navigation: flow.NavigationMap,
+		Selected:   a.selected,
+		Select:     a.Select,
+		Open:       a.Open,
+		NodeGap:    28,
+		RankGap:    64,
+		Empty:      emptyGraph,
+		Overlay:    a.zoomControls,
 	}
 }
 
