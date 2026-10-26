@@ -458,3 +458,35 @@
 - 影响：DoD-6 的机械化就位——删守卫 grep、加 `continue-on-error`、调低
   timeout、放开 CGO/go 版本，都会让本地 `go test ./...` 直接红。
   CI 文件未 push（观测为主；推送后自动跑，时机由用户定）。
+
+## 切片 1 验收（DoD）
+
+验收环境：`slice1-flow` @ `d00977a`；打包版窗口已由 `open` 启动（PID 90019），
+默认库已含 onevra source@v0.2026.12 快照（`s1792993483239249000`，147 元素 /
+335 关系），验收前的库备份在 `openarchitect.db.bak`。
+
+| DoD | 结果 | 证据 |
+|---|---|---|
+| 1 出图 ≤60 s | 未验（GUI 按钮→首帧计时需人眼） | 佐证：同源 core 的 CLI 全链路 `oac scan`（解析+写库）real = **1.95 s** ≪ 60 s；场景 (a) 读库+建图路径单测全覆盖 |
+| 2 抽屉五件套 + Reveal | 未验（目检项） | 单测已钉语义（`TestDetailMethodsHeaderClickExpands`、`TestNeighbourChipJumpsToThatElement`）；`Reveal` 落视口与 Finder 联动待肉眼 |
+| 3 影响范围淡出 | 未验（目检项） | `Muted` 映射有单测；PoC-6 三条判断（可辨识度/边跟随淡出/2 跳深浅）待肉眼 |
+| 4 CLI 与 GUI 同源 | PASS（机器半边） | `TestCLIAndLibraryAgree` PASS；`/tmp/oac impact cmp:…components.DialogOptions --depth 2`（默认库）= **Upstream 2 / Downstream 0**——GUI 抽屉同元素同深度必须报这两个数（GUI 半边待肉眼） |
+| 5 vet + test | PASS | `CGO_ENABLED=0 go vet ./...` + `go test ./...` 全绿（9 包）；`CGO_ENABLED=1 go test -race` ui 29.0 s / store 1.5 s 干净 |
+| 6 core 不 import UI（CI 强制） | PASS | ciguard 5 测试（含三条命令断言）本地全绿；三条 `go list` 守卫本机 `R1 ok` / `driver confined` / `oac headless`；`ci.yaml` 就位未 push |
+| PoC-2 打包态 | PASS（机器半边） | `go tool mygo build` 20.8 s 产出 `OpenArchitect.app` 14.3 MB；bundle 内 `Contents/Resources/libmygo-sqlite3.dylib` 1.5 MB；`open` 后进程存活（加载库失败会在启动即 `log.Fatalf`）；「打包版里能扫描出图」待肉眼 |
+| PoC-7 Gatekeeper | PASS（未被拦） | 本地构建无 `com.apple.quarantine`（仅 provenance）+ ad-hoc 签名 `com.futuremeng.openarchitect`；`open` 直接起。README 分支未触发，不建 README |
+
+- 数据一致性：`~/Library/Application Support/OpenArchitect/` 只有一份
+  `openarchitect.db`（打包版与 dev 版同库，`App.SetName` 与 `mygo.json` 对上了）。
+- plan 的两处口径修正：① parity 测试实际名 `TestCLIAndLibraryAgree`
+  （plan 的 `-run Parity` 匹配不到）；② plan 示例 ID `components.Dialog` 在
+  onevra 图里不存在（只有 `DialogOptions`/`AlertDialogOptions`），验收改用
+  `DialogOptions`。
+- 待人眼清单（对着已打开的打包版窗口做）：
+  1. DoD-1(a)：窗口出现 → 首帧出图 ≤2 s（库里已有快照）；
+  2. DoD-2：单击 `DialogOptions` 节点 → 抽屉五件套 + 点上游 chip Reveal 落视口 +
+     文件路径点开进 Finder；
+  3. DoD-3/PoC-6：开「影响范围」开关 → 中心+2 跳外淡出，回答三条判断；
+  4. DoD-4 GUI 半边：抽屉「影响范围」行必须报 上游 2 / 下游 0（深度 2）；
+  5. DoD-1(b)（可选，破坏性）：删库重扫计时 ≤60 s——做完从 `.bak` 恢复。
+  全过 → 本表补 PASS 行并提交「切片 1 完成」；任何一条不过 → 按 plan 停下报告。
