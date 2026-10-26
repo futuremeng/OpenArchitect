@@ -436,3 +436,25 @@
      `com.futuremeng.openarchitect`；合并 main 时 mygo.json 会冲突，取分支这份（多 `main` 键）。
   4. 遗留观察：main 工作树有一个 10/23 起的旧 dev 窗口进程（PID 1434）仍在运行，
      与本任务无关，未处置。
+
+## CI 门禁（Task 23）
+
+- 结论：`ciguard` 五条守卫测试全绿；三条依赖守卫本机原样跑通（`R1 ok` /
+  `driver confined` / `oac headless`）。**对 plan 命令做了一处定稿修正**：
+  守卫从 `go list -deps`（传递闭包）改为 `go list -f '{{join .Imports "\n"}}'`
+  （直接 import）。证据（mygo v0.5.5 模块缓存实测）：`plugins/sqlite/sqlite.go:27`
+  与 `library.go:18` 直接 import `github.com/egoist/mygo`（root），root 又 import
+  整套 UI 栈（`internal/darwin`、`surface` 等 15+ 包）；而 spec §5.1 要求
+  scanner/oac 收 `*store.DB`（必然 import store，store 必然 import 被授权的驱动），
+  所以 `-deps` 闭包在**任何**合法架构下都必然命中 mygo root——plan 的守卫命令
+  与 plan 自己的架构互斥。spec R1 禁的是「import」（直接导入），命令语义已对齐；
+  YAML 与 ciguard_test 都带同一份证据注释。逐包验证：model/graph 的 -deps 闭包
+  零 mygo 包；store 的闭包含驱动与 root（这是被授权例外的传递代价，链接进
+  oac/GUI 二进制是 plugins/sqlite 加载预编译库的机制本身）。
+- 数字：全量 `go test ./...` 本机 real = 5.52 s（9 个包，M5/arm64，热缓存）；
+  `timeout-minutes: 20` 的下限断言 `minJobTimeout = 15`（分钟）保持不变——
+  plan 推导假设的"本地总耗时"远大于实测，下限断言作为**下限**无害；
+  macOS runner 冷启动另计。实测 5.52 s ≪ 15×60 s，不触发停报分支。
+- 影响：DoD-6 的机械化就位——删守卫 grep、加 `continue-on-error`、调低
+  timeout、放开 CGO/go 版本，都会让本地 `go test ./...` 直接红。
+  CI 文件未 push（观测为主；推送后自动跑，时机由用户定）。
