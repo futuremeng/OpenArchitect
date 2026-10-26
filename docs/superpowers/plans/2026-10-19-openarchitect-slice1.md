@@ -8228,3 +8228,16 @@ git add docs/superpowers/poc/2026-10-19-slice1-findings.md
 # 只在走了 Step 6 第 2 条分支时才加 README.md
 git commit -m "docs: 切片 1 的 DoD 与 PoC-6/7 实测验收记录"
 ```
+
+---
+
+## 完结标记（2026-10-26）
+
+24 个任务全部完成，`slice1-flow` 已合入 `main`（merge commit
+`9ae93f0`），首次 CI（`check` job）绿。DoD 与 PoC 的逐项结果、验收探针
+`TestDoDProbeRealDB` 的实测数字、以及仅剩的人眼目检项（PoC-6 三条
+审美判断、Finder 真 reveal、可选的删库重扫计时），全部记录在
+`docs/superpowers/poc/2026-10-19-slice1-findings.md` 的「切片 1 验收
+（DoD）」一节。Ix 调研条目的顺延决定见
+`docs/superpowers/research/2026-10-26-ix-system-intelligence.md` §6。
+

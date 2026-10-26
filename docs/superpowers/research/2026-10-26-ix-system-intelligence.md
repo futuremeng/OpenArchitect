@@ -97,3 +97,23 @@ Agent 集成三面：`--format llm`（token-minimal 记录流）、`ix mcp`（st
 3. **切片 7 spec A0**：工具输出采用 llm 记录格式 + 截断信号；可选 `oac mcp` 只读工具面；rollout 后复查引入 verify 式新鲜度裁决。
 4. **切片 5 spec**：adapter 策略改为单一 tree-sitter sidecar 优先。
 5. 新增小命令候选：`oac verify`（快照 vs 磁盘一致性，I2 闭环的机械检查面）。
+
+---
+
+## 6. 落点状态（2026-10-26，切片 1 合入 main 后回填）
+
+切片 1 已合入 `main`（merge commit `9ae93f0`），`oac` CLI 定稿为
+`text` + `--json` 两档、退出码只有 0/1。据此修正 §3.1 的「切片 1 CLI
+定稿前」口径——以下条目**全部顺延，不在切片 1 补**：
+
+| 条目 | 落点 | 状态与理由 |
+|---|---|---|
+| §3.1 `--format llm` | 切片 7 A0 | 切片 1 已定稿不动。llm 档的首个消费方就是 A0 的工具返回，届时一并设计省得空转 |
+| §3.2 退出码 2/3/4（歧义/缺失/未 map） | 切片 7 A0 起引入 | 正是 Ix 自己那条血泪教训（加非零退出码对程序化调用方是 breaking change）：切片 1 的调用方是人，0/1 够用；等程序化消费者出现时一次性定码表 |
+| §3.3 每文件 source hash | 切片 2 schema | 写切片 2 spec 时进 `arch_files`（或等价表）；同时服务增量扫描与 `oac verify` |
+| §3.6 element 级历史表 | 切片 2 schema 预留 | 同上，spec 里先立表不实现也可 |
+| §3.4 `oac mcp` + 注册策略 | 切片 7 A0 | 顺路交付 |
+| §3.5 命令词汇对齐 + `rank`/`smells` | 切片 2 graph 层 | `internal/core/graph` 顺手加，成本一轮 BFS 级别 |
+| §3.7 tree-sitter sidecar | 切片 5 spec | 写 spec 时按单 sidecar 路线 |
+| §3.8 skill 目录 | 切片 7（oac 命令面稳定后） | 一条目录 + 一份 reference |
+
