@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/oneo-me/onevra/source/components/flow"
 
 	"github.com/futuremeng/OpenArchitect/internal/core/model"
+	"github.com/futuremeng/OpenArchitect/internal/scanner"
 )
 
 func TestGraphOptionsWireCallbacks(t *testing.T) {
@@ -287,3 +289,65 @@ func TestGraphPageMountsDrawerOnlyForSelection(t *testing.T) {
 		t.Fatalf("clearing the selection must unmount the drawer, texts = %v", tt.Texts())
 	}
 }
+
+// TestGraphPageRepoPickerSwitchesGraph 用 headless tester 真点一遍 chips：
+// 点仓库名 → 图切到那个仓的最新快照。
+func TestGraphPageRepoPickerSwitchesGraph(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	first := seedScan(t, a, fixtureDir("simple-multi-main"))
+	second := seedScan(t, a, fixtureDir("shared-lib"))
+	if err := a.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
+	tt.Frame()
+	// 仓名来自 go.mod 模块路径，不是目录名——从库里读，别硬编码。
+	nameOf := func(report scanner.Report) string {
+		for _, r := range a.repos {
+			if string(r.ID) == string(report.RepoID) {
+				return r.Name
+			}
+		}
+		t.Fatalf("repo %q missing from a.repos", string(report.RepoID))
+		return ""
+	}
+	firstName, secondName := nameOf(first), nameOf(second)
+	for _, want := range []string{"最新", firstName, secondName} {
+		if !tt.HasText(want) {
+			t.Fatalf("picker chip %q missing, texts = %v", want, tt.Texts())
+		}
+	}
+	if err := tt.Click(firstName); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.snapshot.ID != first.SnapshotID {
+		t.Fatalf("chip click must switch snapshot: got %q want %q", a.snapshot.ID, first.SnapshotID)
+	}
+	if len(a.graph.Elements()) != first.Elements {
+		t.Fatalf("graph elements = %d want %d", len(a.graph.Elements()), first.Elements)
+	}
+	if err := tt.Click(secondName); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.snapshot.ID != second.SnapshotID {
+		t.Fatalf("second chip click must switch back: got %q want %q", a.snapshot.ID, second.SnapshotID)
+	}
+}
+
+// TestGraphPageHidesPickerForSingleRepo: 只有一个仓时没有可选项，chips 不画。
+func TestGraphPageHidesPickerForSingleRepo(t *testing.T) {
+	a := newTestApp(t)
+	seedScan(t, a, fixtureDir("simple-multi-main"))
+	if err := a.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
+	tt.Frame()
+	if _, ok := tt.Find("最新"); ok {
+		t.Fatal("the picker must not render with a single repo")
+	}
+}
+

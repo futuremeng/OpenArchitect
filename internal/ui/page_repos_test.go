@@ -132,3 +132,28 @@ func TestRepoScanButtonDisabledWhileScanning(t *testing.T) {
 		t.Fatalf("status = %v", a.status)
 	}
 }
+
+// TestRepoViewButtonPinsAndJumpsToGraph: 仓库页的「查看」把图页钉到这个仓，
+// 并把页面切过去 —— 列表里每一行都必须点得到一张图。
+func TestRepoViewButtonPinsAndJumpsToGraph(t *testing.T) {
+	a := newTestApp(t)
+	only := seedScan(t, a, fixtureDir("simple-multi-main"))
+	if err := a.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(func(c *ui.Context) { a.reposPage(c) }, 900, 600)
+	tt.Frame()
+	if err := tt.Click("查看"); err != nil {
+		t.Fatal(err)
+	}
+	if a.Page() != PageGraph {
+		t.Fatalf("view button must jump to the graph page: page = %v", a.Page())
+	}
+	if a.repoID != string(only.RepoID) {
+		t.Fatalf("repoID = %q want %q", a.repoID, string(only.RepoID))
+	}
+	if a.settings.GraphRepo != string(only.RepoID) {
+		t.Fatalf("the jump must pin the pick: GraphRepo = %q", a.settings.GraphRepo)
+	}
+}
+

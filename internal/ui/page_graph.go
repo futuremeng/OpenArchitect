@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/egoist/mygo/ui"
@@ -16,6 +17,7 @@ func (a *App) graphPage(c *ui.Context) {
 	ui.Column(c).Fill().Padding(sidebar.HeaderHeight(c)+8, 12, 12, 12).
 		Gap(t.Space(2)).Children(func() {
 		a.mapHeader(c)
+		a.repoPicker(c)
 		ui.Row(c).Grow(1).MinHeight(0).Gap(t.Space(3)).Children(func() {
 			flow.View(c, &a.flowState, data, a.graphOptions(data)).Grow(1).MinWidth(0)
 			if a.selected != "" {
@@ -76,6 +78,44 @@ func (a *App) mapHeader(c *ui.Context) {
 		components.Text(c, "影响范围").FontSize(t.Rem(.85)).TextColor(t.TextMuted)
 		components.Text(c, a.StatusLine()).FontSize(t.Rem(.85)).TextColor(t.TextMuted)
 	})
+}
+
+// repoPicker 是图页的仓库过滤器（切片 1 的最小版：单选 + 持久化）。
+// 只有一个仓时不画——没有可选项的选择器只是噪音。chips 用主题边框着色
+// 标记当前仓，而不是背景色：accent 背景上的文字颜色不在主题契约里。
+func (a *App) repoPicker(c *ui.Context) {
+	if len(a.repos) < 2 {
+		return
+	}
+	t := c.Theme()
+	ui.Row(c).FillWidth().Gap(t.Space(1)).Children(func() {
+		pinned := a.settings.GraphRepo != ""
+		latestChip := ui.Button(c, "最新")
+		latestChip.Border(1, pick(pinned, t.Border, t.Accent))
+		if latestChip.Clicked() {
+			_ = a.SetGraphRepo(context.Background(), "")
+		}
+		for _, repo := range a.repos {
+			id := string(repo.ID)
+			chip := ui.Button(c, repo.Name)
+			chip.Border(1, pick(!pinned && id == a.repoID, t.Accent, t.Border))
+			// 没有快照的仓不能选：选了也只是回落，按钮亮着等于邀请用户
+			// 去撞一次无效点击。
+			if a.repoLatest[id] == "" {
+				chip.Disabled(true)
+			}
+			if chip.Clicked() {
+				_ = a.SetGraphRepo(context.Background(), id)
+			}
+		}
+	})
+}
+
+func pick(cond bool, ifTrue, ifFalse ui.Color) ui.Color {
+	if cond {
+		return ifTrue
+	}
+	return ifFalse
 }
 
 func (a *App) zoomControls(c *ui.Context) {

@@ -405,3 +405,58 @@ func TestFinishScanMapsCancellationToIdle(t *testing.T) {
 func TestCancelScanIsSafeWithNothingInFlight(t *testing.T) {
 	newTestApp(t).CancelScan()
 }
+
+// TestSetGraphRepoPinsAndPersists 钉住图页过滤器的整条链：默认全局最新 →
+// 钉选切换 → 新 App 读同一个库继承钉选 → 取消钉选回到全局最新。
+func TestSetGraphRepoPinsAndPersists(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	first := seedScan(t, a, fixtureDir("simple-multi-main"))
+	second := seedScan(t, a, fixtureDir("shared-lib"))
+	if err := a.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if a.snapshot.ID != second.SnapshotID {
+		t.Fatalf("default must be the newest snapshot: got %q want %q", a.snapshot.ID, second.SnapshotID)
+	}
+	if err := a.SetGraphRepo(ctx, string(first.RepoID)); err != nil {
+		t.Fatalf("SetGraphRepo: %v", err)
+	}
+	if a.snapshot.ID != first.SnapshotID || a.repoID != string(first.RepoID) {
+		t.Fatalf("pin must switch the graph: snapshot=%q repo=%q", a.snapshot.ID, a.repoID)
+	}
+	b := NewApp(a.db)
+	if err := b.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if b.snapshot.ID != first.SnapshotID || b.repoID != string(first.RepoID) {
+		t.Fatalf("pin must persist through app_config: snapshot=%q repo=%q", b.snapshot.ID, b.repoID)
+	}
+	if err := b.SetGraphRepo(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if b.snapshot.ID != second.SnapshotID {
+		t.Fatalf("unpin must fall back to the newest snapshot: got %q", b.snapshot.ID)
+	}
+}
+
+// TestGraphRepoPinFallsBackWithoutSnapshot: 钉一个没有快照的仓不改变画面，
+// 但设置保留 —— 那个仓下次扫描后自动生效。
+func TestGraphRepoPinFallsBackWithoutSnapshot(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	only := seedScan(t, a, fixtureDir("simple-multi-main"))
+	if err := a.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetGraphRepo(ctx, "repo:/never/scanned"); err != nil {
+		t.Fatal(err)
+	}
+	if a.snapshot.ID != only.SnapshotID || a.repoID != string(only.RepoID) {
+		t.Fatalf("a snapshotless pin must fall back: snapshot=%q repo=%q", a.snapshot.ID, a.repoID)
+	}
+	if a.settings.GraphRepo != "repo:/never/scanned" {
+		t.Fatalf("the pin itself must survive the fallback: %q", a.settings.GraphRepo)
+	}
+}
+

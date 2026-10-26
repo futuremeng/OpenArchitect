@@ -52,6 +52,9 @@ type App struct {
 	snapshot model.ArchitectureSnapshot
 	graph    *graph.Graph
 	settings config.Settings
+	// repoLatest 是 Reload 每次重算的 repo id → 最新快照 id 表（空串 = 没有
+	// 快照）。仓库选择器与图页 chips 都只读它。
+	repoLatest map[string]string
 
 	// 设置页的保存回执。两个字段都只在主线程写（纪律 1），且 settingsErr
 	// 非空时 settingsSaved 必为 false —— saveRow 里同一次赋值保证这一点。
@@ -157,6 +160,17 @@ func (a *App) Select(id string) {
 	if a.impactMode {
 		a.analyse(id)
 	}
+}
+
+// SetGraphRepo 把图页钉到 repoID 的最新快照并持久化（空串 = 取消钉选，
+// 回到"全局最新"）。它走 Reload 而不是就地换图：库是唯一的真相源，
+// GUI 与 CLI 的一致性（DoD-4）不允许第二条装载路径。
+func (a *App) SetGraphRepo(ctx context.Context, repoID string) error {
+	a.settings.GraphRepo = repoID
+	if err := config.Save(ctx, a.db, a.settings); err != nil {
+		return err
+	}
+	return a.Reload(ctx)
 }
 
 func (a *App) SetImpactMode(on bool) {

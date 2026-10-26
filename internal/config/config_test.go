@@ -23,14 +23,14 @@ func TestLoadDefaultsWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ImpactDepth != DefaultImpactDepth || got.ScanRoot != "" {
+	if got.ImpactDepth != DefaultImpactDepth || got.ScanRoot != "" || got.GraphRepo != "" {
 		t.Fatalf("settings = %+v", got)
 	}
 }
 
 func TestSaveThenLoad(t *testing.T) {
 	db := newDB(t)
-	want := Settings{ScanRoot: "/Users/me/code/cart", ImpactDepth: 3}
+	want := Settings{ScanRoot: "/Users/me/code/cart", ImpactDepth: 3, GraphRepo: "repo:/x/y"}
 	if err := Save(context.Background(), db, want); err != nil {
 		t.Fatal(err)
 	}

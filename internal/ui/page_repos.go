@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+
 	"github.com/egoist/mygo/ui"
 	"github.com/oneo-me/onevra/source/components"
 	"github.com/oneo-me/onevra/source/icons/lucide"
@@ -47,6 +49,16 @@ func (a *App) repoRow(c *ui.Context, repo model.Repo) {
 				TextColor(t.TextMuted).SingleLine()
 		})
 		components.Text(c, repo.Lang).FontSize(t.Rem(.85)).TextColor(t.TextMuted).SingleLine()
+		// 「查看」把图页钉到这个仓再跳过去——仓库页列出的仓必须在任何
+		// 一屏里都点得到，否则列表只是清单。
+		if a.repoLatest[string(repo.ID)] != "" {
+			view := ui.Button(c, "查看")
+			if view.Clicked() {
+				if err := a.SetGraphRepo(context.Background(), string(repo.ID)); err == nil {
+					a.SetPage(PageGraph)
+				}
+			}
+		}
 		scan := sidebar.IconButton(c, lucide.Radar(), "扫描 "+repo.Name)
 		// 扫描中就把这一行的按钮关掉：BeginScan 也会返回 ErrScanInFlight，
 		// 但按钮亮着等于邀请用户去撞那个错误。

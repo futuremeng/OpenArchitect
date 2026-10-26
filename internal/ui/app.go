@@ -30,16 +30,26 @@ func (a *App) Reload(ctx context.Context) error {
 	}
 	a.repos = repos
 
+	// repoLatest 记下每个仓的最新快照：选择器用它把"没有快照的仓"的按钮
+	// 关掉，也让下面的钉选回落有据可查。
+	latest := make(map[string]string, len(repos))
 	newest, owner := "", ""
 	for _, r := range repos {
 		id, err := a.db.LatestSnapshotID(ctx, r.ID)
 		if err != nil {
 			return err
 		}
+		latest[string(r.ID)] = id
 		if id > newest {
-			newest, owner = id, r.ID
+			newest, owner = id, string(r.ID)
 		}
 	}
+	// 图页的钉选优先于全局最新；钉中的仓没有快照时回落到全局最新，
+	// 设置本身保留 —— 它下次扫描出快照后自动生效。
+	if id, ok := latest[settings.GraphRepo]; ok && id != "" {
+		newest, owner = id, settings.GraphRepo
+	}
+	a.repoLatest = latest
 	// The selection clear is hoisted to the single point below, so every
 	// Reload that completes the read phase ends with a cleared selection —
 	// one writer, no asymmetry between the branches. The error returns
