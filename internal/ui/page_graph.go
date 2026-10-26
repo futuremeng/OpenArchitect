@@ -30,12 +30,16 @@ func (a *App) graphPage(c *ui.Context) {
 // graphOptions is split out of graphPage so a test can take the callbacks:
 // flow.View swallows Select and Open into its own hit-testing, which a headless
 // tester cannot click through. This is where DoD-2's wiring lives.
+// OnZoom is the map contract's other half: the wheel, the trackpad scroll,
+// the pinch and the empty-space double-click all change *depth* — the
+// camera's scale stays put, so the type size in view never changes.
 func (a *App) graphOptions(data flow.Data) flow.Options {
 	return flow.Options{
 		Label:      fmt.Sprintf("%d 个元素，%d 条关系", len(data.Nodes), len(data.Edges)),
 		EmptyText:  "还没有扫描过任何仓库",
 		Direction:  flow.LeftToRight,
 		Navigation: flow.NavigationMap,
+		OnZoom:     a.ZoomDepth,
 		Selected:   a.selected,
 		Select:     a.Select,
 		Open:       a.Open,
@@ -77,36 +81,46 @@ func (a *App) mapHeader(c *ui.Context) {
 			a.SetImpactMode(a.impactMode)
 		}
 		components.Text(c, "影响范围").FontSize(t.Rem(.85)).TextColor(t.TextMuted)
+		// 深度角标：滚轮/双击改的是层级不是尺寸，这里得有一处把当前层
+		// 说出来，否则"缩放没放大"会被当成坏了。
+		components.Text(c, a.LevelName()).FontSize(t.Rem(.85)).TextColor(t.TextMuted)
 		components.Text(c, a.StatusLine()).FontSize(t.Rem(.85)).TextColor(t.TextMuted)
 	})
 }
 
-// repoPicker 是图页的仓库过滤器（切片 1 的最小版：单选 + 持久化）。
-// 只有一个仓时不画——没有可选项的选择器只是噪音。chips 用主题边框着色
-// 标记当前仓，而不是背景色：accent 背景上的文字颜色不在主题契约里。
+// repoPicker 是图页的仓库多选过滤器：默认全选（settings 空），点 chip 在
+// 勾选/取消之间切换，"全选"一键回到全选。只有一个仓时不画——没有可选项
+// 的选择器只是噪音。chips 用主题边框着色标记勾选态，而不是背景色：accent
+// 背景上的文字颜色不在主题契约里。
 func (a *App) repoPicker(c *ui.Context) {
 	if len(a.repos) < 2 {
 		return
 	}
 	t := c.Theme()
+	allSelected := true
+	for _, repo := range a.repos {
+		id := string(repo.ID)
+		if a.repoLatest[id] != "" && !a.selectedRepos[id] {
+			allSelected = false
+		}
+	}
 	ui.Row(c).FillWidth().Gap(t.Space(1)).Children(func() {
-		pinned := a.settings.GraphRepo != ""
-		latestChip := ui.Button(c, "最新")
-		latestChip.Border(1, pick(pinned, t.Border, t.Accent))
-		if latestChip.Clicked() {
-			_ = a.SetGraphRepo(context.Background(), "")
+		all := ui.Button(c, "全选")
+		all.Border(1, pick(allSelected, t.Accent, t.Border))
+		if all.Clicked() {
+			_ = a.SetGraphRepos(context.Background(), nil)
 		}
 		for _, repo := range a.repos {
 			id := string(repo.ID)
 			chip := ui.Button(c, repo.Name)
-			chip.Border(1, pick(!pinned && id == a.repoID, t.Accent, t.Border))
+			chip.Border(1, pick(a.selectedRepos[id], t.Accent, t.Border))
 			// 没有快照的仓不能选：选了也只是回落，按钮亮着等于邀请用户
 			// 去撞一次无效点击。
 			if a.repoLatest[id] == "" {
 				chip.Disabled(true)
 			}
 			if chip.Clicked() {
-				_ = a.SetGraphRepo(context.Background(), id)
+				_ = a.ToggleGraphRepo(context.Background(), id)
 			}
 		}
 	})
@@ -129,8 +143,10 @@ func (a *App) zoomControls(c *ui.Context) {
 			apply func()
 		}{
 			{"适应窗口", lucide.Maximize, a.flowState.Fit},
-			{"放大", lucide.ZoomIn, a.flowState.ZoomIn},
-			{"缩小", lucide.ZoomOut, a.flowState.ZoomOut},
+			// 缩放改深度不改尺寸：滚轮之外，这对按钮是同一入口的键盘
+			// 形态（ZoomDepth 也是 flow.Options.OnZoom 的落点）。
+			{"深入一层", lucide.ZoomIn, func() { a.ZoomDepth(true) }},
+			{"上一层", lucide.ZoomOut, func() { a.ZoomDepth(false) }},
 		} {
 			button := sidebar.IconButton(c, control.icon(), control.label)
 			if button.Clicked() {

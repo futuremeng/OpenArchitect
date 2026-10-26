@@ -49,12 +49,12 @@ func (a *App) repoRow(c *ui.Context, repo model.Repo) {
 				TextColor(t.TextMuted).SingleLine()
 		})
 		components.Text(c, repo.Lang).FontSize(t.Rem(.85)).TextColor(t.TextMuted).SingleLine()
-		// 「查看」把图页钉到这个仓再跳过去——仓库页列出的仓必须在任何
-		// 一屏里都点得到，否则列表只是清单。
+		// 「查看」把图页过滤器收成这一个仓再跳过去——仓库页列出的仓必须
+		// 在任何一屏里都点得到，否则列表只是清单。
 		if a.repoLatest[string(repo.ID)] != "" {
 			view := ui.Button(c, "查看")
 			if view.Clicked() {
-				if err := a.SetGraphRepo(context.Background(), string(repo.ID)); err == nil {
+				if err := a.SetGraphRepos(context.Background(), []string{string(repo.ID)}); err == nil {
 					a.SetPage(PageGraph)
 				}
 			}

@@ -104,7 +104,7 @@ func (a *App) commandItems(query string) ([]command.Item, error) {
 // selectedName 是 a.graph 里的显示名；selected 可能指向上一版快照的节点，
 // 那种情况下退化成 id 本身，面板条目仍然可点（点下去 detailPanel 会自己跳过）。
 func (a *App) selectedName() string {
-	if el, ok := a.graph.Element(a.selected); ok {
+	if el, ok := a.view.Element(a.selected); ok {
 		return el.Name
 	}
 	return a.selected

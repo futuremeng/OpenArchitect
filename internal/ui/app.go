@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 
 	"github.com/futuremeng/OpenArchitect/internal/config"
 	"github.com/futuremeng/OpenArchitect/internal/core/graph"
@@ -31,49 +32,89 @@ func (a *App) Reload(ctx context.Context) error {
 	a.repos = repos
 
 	// repoLatest 记下每个仓的最新快照：选择器用它把"没有快照的仓"的按钮
-	// 关掉，也让下面的钉选回落有据可查。
+	// 关掉，也让下面的多选回落有据可查。
 	latest := make(map[string]string, len(repos))
-	newest, owner := "", ""
 	for _, r := range repos {
 		id, err := a.db.LatestSnapshotID(ctx, r.ID)
 		if err != nil {
 			return err
 		}
 		latest[string(r.ID)] = id
-		if id > newest {
-			newest, owner = id, string(r.ID)
+	}
+	// 多选过滤器：空 settings = 全选（所有带快照的仓）；勾选的仓全都失去
+	// 快照时回落到全选，设置本身保留——它下次扫描出快照后自动生效。
+	// repos 按 name 排序，并集装载顺序因此确定。
+	selected := make(map[string]bool)
+	for _, r := range repos {
+		id := string(r.ID)
+		if latest[id] == "" {
+			continue
+		}
+		if len(settings.GraphRepos) == 0 || slices.Contains(settings.GraphRepos, id) {
+			selected[id] = true
 		}
 	}
-	// 图页的钉选优先于全局最新；钉中的仓没有快照时回落到全局最新，
-	// 设置本身保留 —— 它下次扫描出快照后自动生效。
-	if id, ok := latest[settings.GraphRepo]; ok && id != "" {
-		newest, owner = id, settings.GraphRepo
+	if len(selected) == 0 && len(settings.GraphRepos) > 0 {
+		for _, r := range repos {
+			if latest[string(r.ID)] != "" {
+				selected[string(r.ID)] = true
+			}
+		}
 	}
 	a.repoLatest = latest
+	a.selectedRepos = selected
 	// The selection clear is hoisted to the single point below, so every
 	// Reload that completes the read phase ends with a cleared selection —
 	// one writer, no asymmetry between the branches. The error returns
 	// deliberately leave it unset: a failed read keeps the old screen.
-	if newest == "" {
+	if len(selected) == 0 {
 		a.snapshot = model.ArchitectureSnapshot{}
 		a.repoID = ""
 		a.graph = graph.Build(nil, nil)
 	} else {
-		snapshot, err := a.db.Snapshot(ctx, newest)
-		if err != nil {
-			return err
+		var (
+			elements []model.Element
+			rels     []model.Relationship
+			pkgErrs  []string
+			first    model.ArchitectureSnapshot
+		)
+		for _, r := range repos {
+			id := string(r.ID)
+			if !selected[id] {
+				continue
+			}
+			snapshot, err := a.db.Snapshot(ctx, latest[id])
+			if err != nil {
+				return err
+			}
+			el, err := a.db.Elements(ctx, latest[id])
+			if err != nil {
+				return err
+			}
+			rl, err := a.db.Relationships(ctx, latest[id])
+			if err != nil {
+				return err
+			}
+			elements = append(elements, el...)
+			rels = append(rels, rl...)
+			pkgErrs = append(pkgErrs, snapshot.PackageErrors...)
+			if first.ID == "" {
+				first = snapshot
+			}
 		}
-		elements, err := a.db.Elements(ctx, newest)
-		if err != nil {
-			return err
+		// 状态行的"N 个包有错误"统计的是整个视图，不是其中一个仓。
+		first.PackageErrors = pkgErrs
+		a.snapshot = first
+		if len(selected) == 1 {
+			for id := range selected {
+				a.repoID = id
+			}
+		} else {
+			a.repoID = ""
 		}
-		rels, err := a.db.Relationships(ctx, newest)
-		if err != nil {
-			return err
-		}
-		a.snapshot, a.repoID = snapshot, owner
 		a.graph = graph.Build(elements, rels)
 	}
+	a.refreshView()
 	a.selected, a.drillInto, a.impact = "", "", nil
 	return nil
 }

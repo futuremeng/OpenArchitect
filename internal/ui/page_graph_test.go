@@ -27,6 +27,9 @@ func TestGraphOptionsWireCallbacks(t *testing.T) {
 	if opts.Select == nil || opts.Open == nil || opts.Overlay == nil || opts.Empty == nil {
 		t.Fatal("callbacks must all be wired; the map is useless without them")
 	}
+	if opts.OnZoom == nil {
+		t.Fatal("OnZoom must be wired: zoom gestures change depth, not scale")
+	}
 	opts.Select(target)
 	if a.selected != target {
 		t.Fatalf("Select did not reach App: %q", a.selected)
@@ -129,8 +132,9 @@ func TestMapHeaderFoldSwitch(t *testing.T) {
 // 之后 flow 永不再自动 fit（flow.go:398），所以展开/折叠必须自己 Fit()，
 // 否则刚展开的节点在视野外。900×600 下 5 节点与 2 节点的 fit zoom 都被
 // clamp(…, minZoom, 1) 的上界取到 1（render.go:124，layout 宽 < 画布宽，
-// 见 fit 公式），而空白处双击把 camera.zoom 乘 2（render.go:235-240），
-// 于是「有没有 Fit()」在 Zoom() 上可分辨：有则回到 1，无则停在 2。
+// 见 fit 公式）。用户侧的"动过相机"现在用 State.ZoomIn 制造（×1.25，
+// render.go:136）——空白双击已经归 OnZoom 管、只改深度不动相机（切片 2
+// 的地图语义），相机读数因此更干净：有 Fit() 则回到 1，无则停在 1.25。
 func TestFoldSwitchRefitsCameraAfterUserZoom(t *testing.T) {
 	a := newFlowApp(t)
 	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
@@ -141,13 +145,9 @@ func TestFoldSwitchRefitsCameraAfterUserZoom(t *testing.T) {
 	if z := a.flowState.Zoom(); z != 1 {
 		t.Fatalf("fit zoom for the expanded fixture at 900x600 clamps to the upper bound 1, got %g", z)
 	}
-	// 空白处双击才会 zoom*=2：PointerDown 在 `v.hit(x,y) >= 0` 时直接 return false
-	// （render.go:208），所以只有点不中节点的路径能走到 render.go:235-240 那臂。
-	// 下面 Zoom()==2 那条断言本身就是「这两下没落在任何节点上」的证据。
-	tt.ClickAt(850, 550)
-	tt.ClickAt(850, 550)
-	if z := a.flowState.Zoom(); z != 2 {
-		t.Fatalf("the empty-space double click must have doubled the camera zoom, got %g", z)
+	a.flowState.ZoomIn()
+	if z := a.flowState.Zoom(); z != 1.25 {
+		t.Fatalf("ZoomIn must scale the camera by zoomStep, got %g", z)
 	}
 	tt.Advance(time.Second)
 	if err := tt.Click("展开组件层"); err != nil {
@@ -190,34 +190,44 @@ func TestMapHeaderImpactSwitch(t *testing.T) {
 	}
 }
 
-// TestZoomControlsDriveTheCamera 逐钮钉住 zoomControls 的 apply 映射：
-// 放大 = ×1.25（zoomStep, render.go:22），缩小 = ÷1.25，适应窗口 = Fit()
-// 回到被上界 1 夹住的 fit zoom。Zoom() 读的是 camera（目标值），在点击引发
-// 的那次 build 里 Changed 臂执行后即刻可断言。
-func TestZoomControlsDriveTheCamera(t *testing.T) {
+// TestZoomControlsDriveTheDepth 钉住 zoomControls 的新语义：±按钮改的是
+// 深度（仓库层/包层/元素层），不是相机尺寸；两端钳住；适应窗口仍是 Fit。
+// 点击臂在 Click 内同步执行，a.view 当场可读，不用等下一帧。
+func TestZoomControlsDriveTheDepth(t *testing.T) {
 	a := newFlowApp(t)
 	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
 	tt.Advance(500 * time.Millisecond)
 	if !a.flowState.Ready() {
 		t.Fatal("zoom controls sit over a diagram that must be ready")
 	}
+	if a.LevelName() != "元素层" || len(a.view.Elements()) != 5 {
+		t.Fatalf("single-repo default = %q with %d nodes", a.LevelName(), len(a.view.Elements()))
+	}
 	steps := []struct {
-		label string
-		want  float32
+		label     string
+		wantLevel string
+		wantNodes int
 	}{
-		{"放大", 1.25},
-		{"放大", 1.5625},
-		{"缩小", 1.25},
-		{"适应窗口", 1},
+		{"上一层", "包层", 3},
+		{"上一层", "仓库层", 1},
+		{"上一层", "仓库层", 1}, // 钳在 0
+		{"深入一层", "包层", 3},
+		{"深入一层", "元素层", 5},
+		{"深入一层", "元素层", 5}, // 钳在 2
 	}
 	for _, step := range steps {
 		tt.Advance(time.Second) // 每次点击都从「单击」重新开始计数
 		if err := tt.Click(step.label); err != nil {
 			t.Fatal(err)
 		}
-		if z := a.flowState.Zoom(); z != step.want {
-			t.Fatalf("after %q zoom = %g, want %g", step.label, z, step.want)
+		if a.LevelName() != step.wantLevel || len(a.view.Elements()) != step.wantNodes {
+			t.Fatalf("after %q: level = %q nodes = %d, want %q %d",
+				step.label, a.LevelName(), len(a.view.Elements()), step.wantLevel, step.wantNodes)
 		}
+	}
+	// 深度按钮不碰相机：字号恒定，这是"缩放=透视"的全部意义。
+	if z := a.flowState.Zoom(); z > 1 {
+		t.Fatalf("depth buttons must not scale the camera, zoom = %g", z)
 	}
 }
 
@@ -290,9 +300,10 @@ func TestGraphPageMountsDrawerOnlyForSelection(t *testing.T) {
 	}
 }
 
-// TestGraphPageRepoPickerSwitchesGraph 用 headless tester 真点一遍 chips：
-// 点仓库名 → 图切到那个仓的最新快照。
-func TestGraphPageRepoPickerSwitchesGraph(t *testing.T) {
+// TestGraphPageRepoPickerTogglesRepos 用 headless tester 真点一遍多选
+// chips：默认全选 → 点掉一个仓（图缩到剩下的并集）→ 再点回来（并集恢复）
+// → 全点掉等于全选。
+func TestGraphPageRepoPickerTogglesRepos(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()
 	first := seedScan(t, a, fixtureDir("simple-multi-main"))
@@ -313,27 +324,42 @@ func TestGraphPageRepoPickerSwitchesGraph(t *testing.T) {
 		return ""
 	}
 	firstName, secondName := nameOf(first), nameOf(second)
-	for _, want := range []string{"最新", firstName, secondName} {
+	for _, want := range []string{"全选", firstName, secondName} {
 		if !tt.HasText(want) {
 			t.Fatalf("picker chip %q missing, texts = %v", want, tt.Texts())
 		}
+	}
+	if len(a.selectedRepos) != 2 {
+		t.Fatalf("default must be select-all: %v", a.selectedRepos)
 	}
 	if err := tt.Click(firstName); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if a.snapshot.ID != first.SnapshotID {
-		t.Fatalf("chip click must switch snapshot: got %q want %q", a.snapshot.ID, first.SnapshotID)
+	if a.selectedRepos[string(first.RepoID)] || !a.selectedRepos[string(second.RepoID)] {
+		t.Fatalf("chip click must toggle the repo out: %v", a.selectedRepos)
 	}
-	if len(a.graph.Elements()) != first.Elements {
-		t.Fatalf("graph elements = %d want %d", len(a.graph.Elements()), first.Elements)
+	if len(a.graph.Elements()) != second.Elements {
+		t.Fatalf("graph elements = %d want %d", len(a.graph.Elements()), second.Elements)
 	}
+	if err := tt.Click(firstName); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if got, want := len(a.graph.Elements()), first.Elements+second.Elements; got != want {
+		t.Fatalf("toggling back must restore the union: %d want %d", got, want)
+	}
+	// 全点掉 = 全选：什么都不看不是任何人的本意。
+	if err := tt.Click(firstName); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
 	if err := tt.Click(secondName); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if a.snapshot.ID != second.SnapshotID {
-		t.Fatalf("second chip click must switch back: got %q want %q", a.snapshot.ID, second.SnapshotID)
+	if len(a.selectedRepos) != 2 {
+		t.Fatalf("deselecting everything must mean select-all: %v", a.selectedRepos)
 	}
 }
 
@@ -346,7 +372,7 @@ func TestGraphPageHidesPickerForSingleRepo(t *testing.T) {
 	}
 	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
 	tt.Frame()
-	if _, ok := tt.Find("最新"); ok {
+	if _, ok := tt.Find("全选"); ok {
 		t.Fatal("the picker must not render with a single repo")
 	}
 }

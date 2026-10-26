@@ -15,11 +15,11 @@ import (
 func flowFixtureApp(t *testing.T) *App {
 	t.Helper()
 	elements := []model.Element{
-		{ID: model.SystemID("example.com/x"), Type: model.TypeSystem, Name: "x"},
-		{ID: model.ContainerID("example.com/x/cmd/api"), Type: model.TypeContainer, Name: "api"},
-		{ID: model.ComponentID("example.com/x/internal/basket", "Basket"), Type: model.TypeComponent, Name: "Basket"},
-		{ID: model.ComponentID("example.com/x/internal/basket", "Item"), Type: model.TypeComponent, Name: "Item"},
-		{ID: model.ComponentID("example.com/x/internal/orders", "Orders"), Type: model.TypeComponent, Name: "Orders"},
+		{ID: model.SystemID("example.com/x"), Type: model.TypeSystem, Name: "x", RepoID: "repo:/x"},
+		{ID: model.ContainerID("example.com/x/cmd/api"), Type: model.TypeContainer, Name: "api", RepoID: "repo:/x"},
+		{ID: model.ComponentID("example.com/x/internal/basket", "Basket"), Type: model.TypeComponent, Name: "Basket", RepoID: "repo:/x"},
+		{ID: model.ComponentID("example.com/x/internal/basket", "Item"), Type: model.TypeComponent, Name: "Item", RepoID: "repo:/x"},
+		{ID: model.ComponentID("example.com/x/internal/orders", "Orders"), Type: model.TypeComponent, Name: "Orders", RepoID: "repo:/x"},
 	}
 	rels := []model.Relationship{
 		{FromID: model.SystemID("example.com/x"), ToID: model.ContainerID("example.com/x/cmd/api"), Type: model.RelContains, Weight: 1},
@@ -29,6 +29,9 @@ func flowFixtureApp(t *testing.T) *App {
 	}
 	a := NewApp(nil)
 	a.graph = graph.Build(elements, rels)
+	// 手搭 fixture 不走 Reload，深度状态得手动立起来：一个仓 → 自动元素层。
+	a.selectedRepos = map[string]bool{"repo:/x": true}
+	a.refreshView()
 	return a
 }
 
@@ -157,6 +160,7 @@ func TestFlowEdgesWidthCapsAtFour(t *testing.T) {
 		},
 		[]model.Relationship{{FromID: from, ToID: to, Type: model.RelCalls, Weight: 100}},
 	)
+	a.refreshView()
 	edges := a.flowEdges()
 	if len(edges) != 1 {
 		t.Fatalf("edges = %d, want the single cross-package calls edge", len(edges))
@@ -184,6 +188,7 @@ func TestFlowEdgesSkipsSelfLoop(t *testing.T) {
 			{FromID: sys, ToID: to, Type: model.RelCalls, Weight: 1},
 		},
 	)
+	a.refreshView()
 	edges := a.flowEdges()
 	for _, e := range edges {
 		if e.Source == e.Target {
@@ -213,6 +218,7 @@ func TestNewAppDefaultsToContainerLayer(t *testing.T) {
 			{FromID: model.ContainerID("example.com/x/cmd/api"), ToID: model.ComponentID("example.com/x/internal/basket", "Basket"), Type: model.RelCalls, Weight: 9},
 		},
 	)
+	a.refreshView()
 	data := a.flowData()
 	if len(data.Nodes) != 2 {
 		t.Fatalf("fresh app nodes = %d, want only System+Container (spec §12 row 4 default)", len(data.Nodes))

@@ -23,7 +23,7 @@ const (
 )
 
 func (a *App) detailPanel(c *ui.Context) {
-	el, ok := a.graph.Element(a.selected)
+	el, ok := a.view.Element(a.selected)
 	if !ok {
 		// 重新扫描换了一张图，selected 还指着上一版的节点。这一帧不画，
 		// selected 由下一次点击重写。
@@ -39,8 +39,8 @@ func (a *App) detailPanel(c *ui.Context) {
 				ui.Column(c).FillWidth().Gap(t.Space(2)).Children(func() {
 					a.detailFacts(c, el)
 					a.detailMethods(c, el)
-					a.neighbourGroup(c, "直接上游", a.graph.Upstream(el.ID, 1), lucide.ArrowUpRight)
-					a.neighbourGroup(c, "直接下游", a.graph.Downstream(el.ID, 1), lucide.ArrowDownLeft)
+					a.neighbourGroup(c, "直接上游", a.view.Upstream(el.ID, 1), lucide.ArrowUpRight)
+					a.neighbourGroup(c, "直接下游", a.view.Downstream(el.ID, 1), lucide.ArrowDownLeft)
 					a.detailImpact(c, el)
 				})
 			})
@@ -98,11 +98,11 @@ func detailField(c *ui.Context, t *ui.Theme, label, value string) {
 // Graph.Relationships()，那个切片按 (from,to,type) 排过序，所以每帧一致。
 func (a *App) containersOf(id string) []model.Element {
 	var out []model.Element
-	for _, rel := range a.graph.Relationships() {
+	for _, rel := range a.view.Relationships() {
 		if rel.ToID != id || rel.Type != model.RelContains {
 			continue
 		}
-		owner, ok := a.graph.Element(rel.FromID)
+		owner, ok := a.view.Element(rel.FromID)
 		if ok && owner.Type == model.TypeContainer {
 			out = append(out, owner)
 		}

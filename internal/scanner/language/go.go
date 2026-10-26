@@ -315,21 +315,38 @@ func relationships(modulePath string, pkgs []*packages.Package,
 	return dedup(acc)
 }
 
-// componentIDFor turns a named type into its element id, reporting false for
-// anything that is not a component of this scan (dependency types, unexported,
-// builtin types with no package). No alias guard (unlike exportedComponentTypes):
-// the *types.Named cast in dependsOnEdges already rejects materialised aliases,
-// and types.Unalias would let an alias masquerade as its target type.
-func componentIDFor(modulePath string, named *types.Named) (string, bool) {
+// componentIDFor turns a named type into its element id. ownPackage types are
+// the scan's own components (ok without further checks); foreign exported
+// named types from a real module (slice 2: cross-module edges) come back
+// flagged external, so the caller can store a dangling edge whose endpoint
+// only materialises when that other module is scanned. Standard library and
+// unexported targets are dropped: an edge to fmt.Println carries no
+// architecture (spec §6.4's exclusion set).
+func componentIDFor(modulePath string, named *types.Named) (id string, external, ok bool) {
 	obj := named.Obj()
 	if obj == nil || !obj.Exported() || obj.Pkg() == nil {
-		return "", false
+		return "", false, false
 	}
 	pkgPath := obj.Pkg().Path()
-	if !ownPackage(modulePath, pkgPath) {
-		return "", false
+	if ownPackage(modulePath, pkgPath) {
+		return model.ComponentID(pkgPath, obj.Name()), false, true
 	}
-	return model.ComponentID(pkgPath, obj.Name()), true
+	if isStdlibPackage(pkgPath) {
+		return "", false, false
+	}
+	return model.ComponentID(pkgPath, obj.Name()), true, true
+}
+
+// isStdlibPackage is the two-segment test: a module path's first segment
+// carries a domain (github.com, golang.org/x, gopkg.in), a standard library
+// path's never does. This is the same heuristic go's own module resolution
+// uses to tell std apart from the proxy.
+func isStdlibPackage(pkgPath string) bool {
+	first := pkgPath
+	if i := strings.Index(pkgPath, "/"); i >= 0 {
+		first = pkgPath[:i]
+	}
+	return !strings.Contains(first, ".")
 }
 
 // edgeOwnership answers "which Component owns this source position?" — the
@@ -368,7 +385,14 @@ func ownershipInFile(modulePath string, pkg *packages.Package, byPackage map[str
 		if !ok {
 			return true
 		}
-		owner, _ = componentIDFor(modulePath, named)
+		// edgeOwnership only ever attributes to this scan's own components;
+		// an external flag here would mean a method declared on a foreign
+		// type, which ownPackage parsing cannot produce — guard it anyway.
+		id, external, _ := componentIDFor(modulePath, named)
+		if external {
+			id = ""
+		}
+		owner = id
 		return owner == ""
 	})
 	if owner != "" {
@@ -444,8 +468,8 @@ func dependsOnEdges(modulePath string, pkg *packages.Package, comps map[string]*
 		if !ok {
 			continue
 		}
-		to, isComponent := componentIDFor(modulePath, named)
-		if !isComponent || !owns(comps, to) {
+		to, external, isComponent := componentIDFor(modulePath, named)
+		if !isComponent || (!external && !owns(comps, to)) {
 			continue
 		}
 		from, ok := edgeOwnership(modulePath, pkg, byPackage, ident.Pos())
@@ -473,8 +497,8 @@ func callsEdges(modulePath string, pkg *packages.Package, comps map[string]*comp
 			if !ok {
 				return true
 			}
-			to, isComponent := componentIDFor(modulePath, target)
-			if !isComponent || !owns(comps, to) {
+			to, external, isComponent := componentIDFor(modulePath, target)
+			if !isComponent || (!external && !owns(comps, to)) {
 				return true
 			}
 			if from, owned := edgeOwnership(modulePath, pkg, byPackage, call.Pos()); owned && from != to {

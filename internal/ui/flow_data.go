@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/egoist/mygo/ui"
 	"github.com/oneo-me/onevra/source/components/flow"
 
+	"github.com/futuremeng/OpenArchitect/internal/core/graph"
 	"github.com/futuremeng/OpenArchitect/internal/core/model"
 )
 
@@ -14,7 +17,7 @@ import (
 // ms of render work against the 16 ms budget, so memoisation and its
 // invalidation points are not worth a slice-1 slot.
 func (a *App) flowData() flow.Data {
-	elements := a.graph.Elements()
+	elements := a.view.Elements()
 	keep := a.quietSet()
 	nodes := make([]flow.Node, 0, len(elements))
 	// visible is read only in collapsed mode (the default, spec §12 row 4):
@@ -41,6 +44,10 @@ func (a *App) flowData() flow.Data {
 		label := el.Name
 		if pkg != "" {
 			label += "，" + pkg
+		} else if strings.HasPrefix(el.ID, "pkg:") {
+			// 包组节点：只画最后一段会把两个仓的 "store" 撞成同名，
+			// GroupLabel 给出 "仓名/包名" 这一级可区分的短路径。
+			label = graph.GroupLabel(el.ID)
 		}
 		node := flow.Node{
 			ID:      el.ID,
@@ -87,7 +94,7 @@ func (a *App) quietSet() map[string]bool {
 // flowEdges is the unfiltered App→edges translation; the visibility fold
 // lives only in flowData (one place, ruling 1).
 func (a *App) flowEdges() []flow.Edge {
-	rels := a.graph.Relationships()
+	rels := a.view.Relationships()
 	edges := make([]flow.Edge, 0, len(rels))
 	for _, rel := range rels {
 		if rel.FromID == rel.ToID {

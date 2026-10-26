@@ -272,3 +272,53 @@ func TestPackageFunctionCallProducesNoEdge(t *testing.T) {
 		}
 	}
 }
+
+// TestCrossModuleDanglingEdges 钉住切片 2 的扫描器要求：跨模块（非 stdlib、
+// 非测试）的依赖与调用以悬挂边入库——端点 id 用同一套 ComponentID 方案，
+// 等对方模块被扫描后在合并视图里自然接上；stdlib 边继续丢弃，外模块的
+// 类型也不得作为元素混进本快照。
+func TestCrossModuleDanglingEdges(t *testing.T) {
+	out := parseFixture(t, "crossmod-app")
+	const foreign = "cmp:crossmod.example/dep/store.DB"
+	for _, e := range out.Elements {
+		if strings.Contains(e.ID, "crossmod.example/dep") {
+			t.Fatalf("foreign element leaked into snapshot: %s", e.ID)
+		}
+	}
+	var depends, calls bool
+	for _, r := range out.Relationships {
+		if strings.Contains(r.ToID, "sync.") || strings.Contains(r.FromID, "sync.") {
+			t.Fatalf("stdlib edge leaked: %+v", r)
+		}
+		if r.ToID != foreign {
+			continue
+		}
+		switch r.Type {
+		case model.RelDependsOn:
+			depends = true
+		case model.RelCalls:
+			calls = true
+		}
+	}
+	if !depends || !calls {
+		t.Fatalf("dangling edges missing: depends_on=%v calls=%v", depends, calls)
+	}
+}
+
+func TestIsStdlibPackage(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		std  bool
+	}{
+		{"fmt", true}, {"net/http", true}, {"go/ast", true},
+		{"github.com/egoist/mygo/ui", false},
+		{"golang.org/x/tools/go/packages", false},
+		{"gopkg.in/yaml.v3", false},
+		{"crossmod.example/dep/store", false},
+	} {
+		if got := isStdlibPackage(tc.path); got != tc.std {
+			t.Errorf("isStdlibPackage(%q) = %v, want %v", tc.path, got, tc.std)
+		}
+	}
+}
+

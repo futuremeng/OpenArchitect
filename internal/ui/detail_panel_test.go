@@ -61,6 +61,7 @@ func newDetailApp(t *testing.T) *App {
 		[]model.Element{system, api, worker, basket, item, orders},
 		rels,
 	)
+	a.refreshView()
 	a.selected = basket.ID
 	return a
 }

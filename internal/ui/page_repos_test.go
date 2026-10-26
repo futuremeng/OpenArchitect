@@ -94,9 +94,10 @@ func TestRepoScanButtonRunsToReady(t *testing.T) {
 		t.Fatalf("status = %v err = %v", a.status, a.err)
 	}
 	// Reload 会用库里读出的行覆盖 a.repos，所以这里只钉状态机：status、
-	// repoID、err。a.repos 的内容不是这条测试的断言对象。
-	if a.repoID != repo.ID {
-		t.Fatalf("repoID = %q want %q", a.repoID, repo.ID)
+	// 选择集、err。a.repos 的内容不是这条测试的断言对象。两个仓都带快照
+	// 且默认全选，repoID 因此是空（合并视图没有单一归属仓）。
+	if !a.selectedRepos[string(repo.ID)] || len(a.selectedRepos) != 2 {
+		t.Fatalf("the scanned repo must join the select-all union: %v", a.selectedRepos)
 	}
 	if a.err != nil {
 		t.Fatalf("a finished scan must clear err, got %v", a.err)
@@ -133,8 +134,8 @@ func TestRepoScanButtonDisabledWhileScanning(t *testing.T) {
 	}
 }
 
-// TestRepoViewButtonPinsAndJumpsToGraph: 仓库页的「查看」把图页钉到这个仓，
-// 并把页面切过去 —— 列表里每一行都必须点得到一张图。
+// TestRepoViewButtonPinsAndJumpsToGraph: 仓库页的「查看」把图页过滤器收成
+// 这一个仓，并把页面切过去 —— 列表里每一行都必须点得到一张图。
 func TestRepoViewButtonPinsAndJumpsToGraph(t *testing.T) {
 	a := newTestApp(t)
 	only := seedScan(t, a, fixtureDir("simple-multi-main"))
@@ -152,8 +153,8 @@ func TestRepoViewButtonPinsAndJumpsToGraph(t *testing.T) {
 	if a.repoID != string(only.RepoID) {
 		t.Fatalf("repoID = %q want %q", a.repoID, string(only.RepoID))
 	}
-	if a.settings.GraphRepo != string(only.RepoID) {
-		t.Fatalf("the jump must pin the pick: GraphRepo = %q", a.settings.GraphRepo)
+	if len(a.settings.GraphRepos) != 1 || a.settings.GraphRepos[0] != string(only.RepoID) {
+		t.Fatalf("the jump must pin the pick: GraphRepos = %v", a.settings.GraphRepos)
 	}
 }
 

@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/futuremeng/OpenArchitect/internal/core/store"
@@ -23,14 +24,15 @@ func TestLoadDefaultsWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ImpactDepth != DefaultImpactDepth || got.ScanRoot != "" || got.GraphRepo != "" {
+	if got.ImpactDepth != DefaultImpactDepth || got.ScanRoot != "" || len(got.GraphRepos) != 0 {
 		t.Fatalf("settings = %+v", got)
 	}
 }
 
 func TestSaveThenLoad(t *testing.T) {
 	db := newDB(t)
-	want := Settings{ScanRoot: "/Users/me/code/cart", ImpactDepth: 3, GraphRepo: "repo:/x/y"}
+	want := Settings{ScanRoot: "/Users/me/code/cart", ImpactDepth: 3,
+		GraphRepos: []string{"repo:/x/y", "repo:/a/b"}}
 	if err := Save(context.Background(), db, want); err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +40,37 @@ func TestSaveThenLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
+	if got.ScanRoot != want.ScanRoot || got.ImpactDepth != want.ImpactDepth ||
+		!slices.Equal(got.GraphRepos, want.GraphRepos) {
 		t.Fatalf("got %+v want %+v", got, want)
+	}
+}
+
+// 旧版单仓钉选（graph.repo）必须迁进多选集合，否则升级当天用户就会看到
+// 自己丢了的过滤器选择。
+func TestLegacyGraphRepoMigrates(t *testing.T) {
+	db := newDB(t)
+	ctx := context.Background()
+	if err := db.ConfigSet(ctx, graphRepoKey, "repo:/old/pin"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.GraphRepos, []string{"repo:/old/pin"}) {
+		t.Fatalf("legacy pin not migrated: %+v", got)
+	}
+	// 新键一旦有值，旧键就此失声。
+	if err := Save(ctx, db, Settings{GraphRepos: []string{"repo:/new"}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = Load(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.GraphRepos, []string{"repo:/new"}) {
+		t.Fatalf("stale legacy key still winning: %+v", got)
 	}
 }
 
@@ -114,7 +145,7 @@ func TestLoadPropagatesReadErrorWithZeroValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load on a closed DB must return a non-nil error")
 	}
-	if got != (Settings{}) {
+	if got.ScanRoot != "" || got.ImpactDepth != 0 || got.GraphRepos != nil {
 		t.Fatalf("on error Load must return the zero Settings; got %+v (ImpactDepth 0, not DefaultImpactDepth %d) — caller must not read it when err != nil", got, DefaultImpactDepth)
 	}
 }

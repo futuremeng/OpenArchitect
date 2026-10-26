@@ -52,10 +52,13 @@ func TestNewAppDefaults(t *testing.T) {
 	}
 }
 
-func TestReloadPicksNewestSnapshotAcrossRepos(t *testing.T) {
+// TestReloadUnionsAllSnapshottedRepos: 默认全选 —— 两个带快照的仓都进合并
+// 视图；snapshot 行取按名排序的第一个（状态行的元数据），repoID 为空（合并
+// 视图没有单一归属仓）。
+func TestReloadUnionsAllSnapshottedRepos(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()
-	seedScan(t, a, fixtureDir("simple-multi-main"))
+	first := seedScan(t, a, fixtureDir("simple-multi-main"))
 	second := seedScan(t, a, fixtureDir("shared-lib"))
 	if err := a.Reload(ctx); err != nil {
 		t.Fatalf("Reload: %v", err)
@@ -63,18 +66,18 @@ func TestReloadPicksNewestSnapshotAcrossRepos(t *testing.T) {
 	if len(a.repos) != 2 {
 		t.Fatalf("repos = %d", len(a.repos))
 	}
-	if a.snapshot.ID != second.SnapshotID {
-		t.Fatalf("Reload must take the newest snapshot, got %q want %q", a.snapshot.ID, second.SnapshotID)
+	if len(a.selectedRepos) != 2 {
+		t.Fatalf("both repos must be selected by default: %v", a.selectedRepos)
 	}
 	// A direct Reload re-reads the database but is not a completed scan, so the
 	// scan lifecycle state stays Idle (finishScan is what sets Ready). The
 	// empty-database test below pins the ruling's other half with the same
 	// status assertion.
-	if a.repoID != second.RepoID || a.status != StatusIdle {
+	if a.repoID != "" || a.status != StatusIdle {
 		t.Fatalf("repoID/status = %q/%v", a.repoID, a.status)
 	}
-	if len(a.graph.Elements()) != second.Elements {
-		t.Fatalf("graph elements = %d want %d", len(a.graph.Elements()), second.Elements)
+	if got, want := len(a.graph.Elements()), first.Elements+second.Elements; got != want {
+		t.Fatalf("graph elements = %d want %d", got, want)
 	}
 }
 
@@ -235,13 +238,29 @@ func TestBeginScanCompletesScanThroughPost(t *testing.T) {
 	if a.status != StatusReady {
 		t.Fatalf("status after scan = %v, err = %v", a.status, a.err)
 	}
-	stored, err := a.db.Elements(ctx, a.snapshot.ID)
+	// 图必须是从库里读出来的行拼的：默认全选下，两个仓的最新快照并集就是
+	// 图的全部内容。
+	latestA, err := a.db.LatestSnapshotID(ctx, string(first.RepoID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.repoID != model.RepoIDFor(abs) || len(stored) == 0 || len(a.graph.Elements()) != len(stored) {
-		t.Fatalf("graph must be rebuilt from stored rows: repoID=%q graph=%d stored=%d",
-			a.repoID, len(a.graph.Elements()), len(stored))
+	latestB, err := a.db.LatestSnapshotID(ctx, model.RepoIDFor(abs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedA, err := a.db.Elements(ctx, latestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedB, err := a.db.Elements(ctx, latestB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(storedA) == 0 || len(storedB) == 0 ||
+		len(a.graph.Elements()) != len(storedA)+len(storedB) ||
+		!a.selectedRepos[string(first.RepoID)] || !a.selectedRepos[model.RepoIDFor(abs)] {
+		t.Fatalf("graph must be the union of stored rows: graph=%d stored=%d+%d selected=%v",
+			len(a.graph.Elements()), len(storedA), len(storedB), a.selectedRepos)
 	}
 	settings, err := config.Load(ctx, a.db)
 	if err != nil {
@@ -406,9 +425,9 @@ func TestCancelScanIsSafeWithNothingInFlight(t *testing.T) {
 	newTestApp(t).CancelScan()
 }
 
-// TestSetGraphRepoPinsAndPersists 钉住图页过滤器的整条链：默认全局最新 →
-// 钉选切换 → 新 App 读同一个库继承钉选 → 取消钉选回到全局最新。
-func TestSetGraphRepoPinsAndPersists(t *testing.T) {
+// TestGraphReposSelectUnionAndPersists 钉住图页多选过滤器的整条链：默认
+// 全选（两仓并集）→ 收成单仓 → 新 App 读同一个库继承选择 → 回到全选。
+func TestGraphReposSelectUnionAndPersists(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()
 	first := seedScan(t, a, fixtureDir("simple-multi-main"))
@@ -416,47 +435,134 @@ func TestSetGraphRepoPinsAndPersists(t *testing.T) {
 	if err := a.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if a.snapshot.ID != second.SnapshotID {
-		t.Fatalf("default must be the newest snapshot: got %q want %q", a.snapshot.ID, second.SnapshotID)
+	if len(a.selectedRepos) != 2 {
+		t.Fatalf("default must select every snapshotted repo: %v", a.selectedRepos)
 	}
-	if err := a.SetGraphRepo(ctx, string(first.RepoID)); err != nil {
-		t.Fatalf("SetGraphRepo: %v", err)
+	if got, want := len(a.graph.Elements()), first.Elements+second.Elements; got != want {
+		t.Fatalf("union elements = %d want %d", got, want)
+	}
+	if err := a.SetGraphRepos(ctx, []string{string(first.RepoID)}); err != nil {
+		t.Fatalf("SetGraphRepos: %v", err)
 	}
 	if a.snapshot.ID != first.SnapshotID || a.repoID != string(first.RepoID) {
-		t.Fatalf("pin must switch the graph: snapshot=%q repo=%q", a.snapshot.ID, a.repoID)
+		t.Fatalf("single pick must switch the graph: snapshot=%q repo=%q", a.snapshot.ID, a.repoID)
+	}
+	if len(a.graph.Elements()) != first.Elements {
+		t.Fatalf("picked graph elements = %d want %d", len(a.graph.Elements()), first.Elements)
 	}
 	b := NewApp(a.db)
 	if err := b.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if b.snapshot.ID != first.SnapshotID || b.repoID != string(first.RepoID) {
-		t.Fatalf("pin must persist through app_config: snapshot=%q repo=%q", b.snapshot.ID, b.repoID)
+		t.Fatalf("pick must persist through app_config: snapshot=%q repo=%q", b.snapshot.ID, b.repoID)
 	}
-	if err := b.SetGraphRepo(ctx, ""); err != nil {
+	if err := b.SetGraphRepos(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if b.snapshot.ID != second.SnapshotID {
-		t.Fatalf("unpin must fall back to the newest snapshot: got %q", b.snapshot.ID)
+	if len(b.selectedRepos) != 2 {
+		t.Fatalf("empty pick must mean select-all: %v", b.selectedRepos)
 	}
 }
 
-// TestGraphRepoPinFallsBackWithoutSnapshot: 钉一个没有快照的仓不改变画面，
+// TestGraphReposFallbackWithoutSnapshot: 选一个没有快照的仓不改变画面，
 // 但设置保留 —— 那个仓下次扫描后自动生效。
-func TestGraphRepoPinFallsBackWithoutSnapshot(t *testing.T) {
+func TestGraphReposFallbackWithoutSnapshot(t *testing.T) {
 	a := newTestApp(t)
 	ctx := context.Background()
 	only := seedScan(t, a, fixtureDir("simple-multi-main"))
 	if err := a.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.SetGraphRepo(ctx, "repo:/never/scanned"); err != nil {
+	if err := a.SetGraphRepos(ctx, []string{"repo:/never/scanned"}); err != nil {
 		t.Fatal(err)
 	}
 	if a.snapshot.ID != only.SnapshotID || a.repoID != string(only.RepoID) {
-		t.Fatalf("a snapshotless pin must fall back: snapshot=%q repo=%q", a.snapshot.ID, a.repoID)
+		t.Fatalf("a snapshotless pick must fall back: snapshot=%q repo=%q", a.snapshot.ID, a.repoID)
 	}
-	if a.settings.GraphRepo != "repo:/never/scanned" {
-		t.Fatalf("the pin itself must survive the fallback: %q", a.settings.GraphRepo)
+	if len(a.settings.GraphRepos) != 1 || a.settings.GraphRepos[0] != "repo:/never/scanned" {
+		t.Fatalf("the pick itself must survive the fallback: %v", a.settings.GraphRepos)
+	}
+}
+
+// TestMergedGraphShowsCrossRepoEdges 是把整条链钉死的最重要一条：扫描器
+// 把跨模块依赖/调用存成悬挂边（切片 2 修正），两个仓都进合并视图后，这些
+// 边必须在包层聚合图里接上——不是被 graph.Build 的端点存在性过滤吃掉。
+func TestMergedGraphShowsCrossRepoEdges(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	seedScan(t, a, fixtureDir("crossmod-dep"))
+	seedScan(t, a, fixtureDir("crossmod-app"))
+	if err := a.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.selectedRepos) != 2 {
+		t.Fatalf("both repos must be in the merged view: %v", a.selectedRepos)
+	}
+	// 元素层：悬挂边两端都在并集里 → 原始关系里就有跨仓 calls。
+	var cross bool
+	for _, rel := range a.graph.Relationships() {
+		if strings.HasPrefix(rel.ToID, "cmp:crossmod.example/dep/") &&
+			strings.HasPrefix(rel.FromID, "cmp:crossmod.example/app/") && rel.Type == model.RelCalls {
+			cross = true
+		}
+	}
+	if !cross {
+		t.Fatal("cross-repo calls edge missing from the merged union")
+	}
+	// 包层（多仓默认深度）：跨仓边聚合成包组之间的 calls。
+	if a.Depth() != 1 {
+		t.Fatalf("multi-repo default depth = %d want 1", a.Depth())
+	}
+	found := false
+	for _, rel := range a.view.Relationships() {
+		if rel.FromID == "pkg:crossmod.example/app/store" && rel.ToID == "pkg:crossmod.example/dep/store" && rel.Type == model.RelCalls {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("package-level merged graph lost the cross-repo edge: %+v", a.view.Relationships())
+	}
+	// 仓库层：两个仓之间一条 calls 聚合边。
+	if !a.setDepth(0) {
+		t.Fatal("setDepth(0) must change the depth")
+	}
+	a.refreshView()
+	edges := a.view.Relationships()
+	if len(a.view.Elements()) != 2 || len(edges) != 1 || edges[0].Type != model.RelCalls {
+		t.Fatalf("repo level = %d nodes %v", len(a.view.Elements()), edges)
+	}
+}
+
+// TestZoomDepthWalksLevels: 缩放改深度不改尺寸 —— ZoomDepth 在仓库层/包层/
+// 元素层之间走，节点数随深度单调不减，越界被钳住。
+func TestZoomDepthWalksLevels(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	seedScan(t, a, fixtureDir("crossmod-dep"))
+	seedScan(t, a, fixtureDir("crossmod-app"))
+	if err := a.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if a.LevelName() != "包层" {
+		t.Fatalf("multi-repo default = %q want 包层", a.LevelName())
+	}
+	a.ZoomDepth(false) // → 仓库层
+	if a.LevelName() != "仓库层" || len(a.view.Elements()) != 2 {
+		t.Fatalf("repo level: %q %d nodes", a.LevelName(), len(a.view.Elements()))
+	}
+	a.ZoomDepth(false) // 钳在 0
+	if a.Depth() != 0 {
+		t.Fatalf("depth must clamp at 0: %d", a.Depth())
+	}
+	a.ZoomDepth(true)
+	a.ZoomDepth(true) // → 元素层
+	if a.LevelName() != "元素层" {
+		t.Fatalf("depth = %q want 元素层", a.LevelName())
+	}
+	a.ZoomDepth(true) // 钳在 2
+	if a.Depth() != 2 {
+		t.Fatalf("depth must clamp at 2: %d", a.Depth())
 	}
 }
 

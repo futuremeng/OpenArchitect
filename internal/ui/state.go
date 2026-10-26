@@ -55,6 +55,16 @@ type App struct {
 	// repoLatest 是 Reload 每次重算的 repo id → 最新快照 id 表（空串 = 没有
 	// 快照）。仓库选择器与图页 chips 都只读它。
 	repoLatest map[string]string
+	// selectedRepos 是本次 Reload 真正装进 graph 的仓库集合（多选过滤器的
+	// 结果，空 settings = 全选）。图页 chips 的勾选态读它，不读 settings：
+	// 回落发生时两者故意不同。
+	selectedRepos map[string]bool
+	// view 是当前深度下 flow/详情/影响面共用的展示图：Reload 或深度变化时
+	// 从 graph 聚合出来。graph 永远是选中仓库的原始并集。
+	view *graph.Graph
+	// zoomLevel 是地图式深度：0 = 仓库层，1 = 包层，2 = 元素层；
+	// -1 = 还没定（首次 Reload 按选中仓数自动选）。
+	zoomLevel int
 
 	// 设置页的保存回执。两个字段都只在主线程写（纪律 1），且 settingsErr
 	// 非空时 settingsSaved 必为 false —— saveRow 里同一次赋值保证这一点。
@@ -96,6 +106,8 @@ func NewApp(db *store.DB) *App {
 		db:             db,
 		page:           PageGraph,
 		graph:          graph.Build(nil, nil),
+		view:           graph.Build(nil, nil),
+		zoomLevel:      -1,
 		showComponents: false,
 		post:           func(fn func()) { fn() },
 	}
@@ -142,6 +154,14 @@ func (a *App) SetShowComponents(on bool) { a.showComponents = on }
 // the spec §9.3 line 515 form only wrote drillInto because there Select ran
 // first, but command-palette callers skip the single click.
 func (a *App) Open(id string) {
+	// 命令面板搜到的是原始元素；当前深度若是聚合层，那个 id 不在视图里。
+	// 下钻先把自己降到元素层，否则搜索结果点下去只是一片空白。
+	if _, ok := a.view.Element(id); !ok {
+		if a.setDepth(2) {
+			a.refreshView()
+			a.flowState.Fit()
+		}
+	}
 	a.drillInto = id
 	if a.selected != id {
 		a.Select(id)
@@ -162,15 +182,103 @@ func (a *App) Select(id string) {
 	}
 }
 
-// SetGraphRepo 把图页钉到 repoID 的最新快照并持久化（空串 = 取消钉选，
-// 回到"全局最新"）。它走 Reload 而不是就地换图：库是唯一的真相源，
+// SetGraphRepos 把图页的仓库过滤器设为 ids 并持久化（空 = 全选，所有带
+// 快照的仓都进合并视图）。它走 Reload 而不是就地换图：库是唯一的真相源，
 // GUI 与 CLI 的一致性（DoD-4）不允许第二条装载路径。
-func (a *App) SetGraphRepo(ctx context.Context, repoID string) error {
-	a.settings.GraphRepo = repoID
+func (a *App) SetGraphRepos(ctx context.Context, repoIDs []string) error {
+	a.settings.GraphRepos = repoIDs
 	if err := config.Save(ctx, a.db, a.settings); err != nil {
 		return err
 	}
 	return a.Reload(ctx)
+}
+
+// ToggleGraphRepo 勾选/取消一个仓（chips 的点击路径）。取消到空集合等于
+// 全选——"什么都不看"不是任何用户想要的状态，全选才是它的本意。
+func (a *App) ToggleGraphRepo(ctx context.Context, repoID string) error {
+	next := make([]string, 0, len(a.repos))
+	for _, r := range a.repos {
+		id := string(r.ID)
+		if id == repoID {
+			continue
+		}
+		if a.selectedRepos[id] && a.repoLatest[id] != "" {
+			next = append(next, id)
+		}
+	}
+	if !a.selectedRepos[repoID] {
+		next = append(next, repoID)
+	}
+	if len(next) == 0 {
+		next = nil // 全空 = 全选
+	}
+	return a.SetGraphRepos(ctx, next)
+}
+
+// Depth 是当前深度（0 仓库层 / 1 包层 / 2 元素层），-1 的自动值按选中仓
+// 数决定：单仓直接进元素层，多仓停在包层——合并视图的元素层第一天就是
+// 一坨意面。
+func (a *App) Depth() int {
+	if a.zoomLevel >= 0 {
+		return a.zoomLevel
+	}
+	if len(a.selectedRepos) <= 1 {
+		return 2
+	}
+	return 1
+}
+
+// LevelName 是深度的人话名字（图页角标）。
+func (a *App) LevelName() string {
+	switch a.Depth() {
+	case 0:
+		return "仓库层"
+	case 1:
+		return "包层"
+	default:
+		return "元素层"
+	}
+}
+
+// ZoomDepth 是滚轮/双击/±按钮的统一入口：缩放改的是深度，不是尺寸。
+func (a *App) ZoomDepth(zoomIn bool) {
+	step := 1
+	if !zoomIn {
+		step = -1
+	}
+	if a.setDepth(a.Depth() + step) {
+		a.refreshView()
+		a.flowState.Fit()
+	}
+}
+
+// setDepth 钳制并写入深度，返回是否真的变了。
+func (a *App) setDepth(d int) bool {
+	if d < 0 {
+		d = 0
+	}
+	if d > 2 {
+		d = 2
+	}
+	if d == a.Depth() {
+		return false
+	}
+	a.zoomLevel = d
+	return true
+}
+
+// refreshView 从原始并集重算当前深度的展示图。
+func (a *App) refreshView() {
+	var level graph.Level
+	switch a.Depth() {
+	case 0:
+		level = graph.LevelRepo
+	case 1:
+		level = graph.LevelPackage
+	default:
+		level = graph.LevelElement
+	}
+	a.view = graph.Aggregate(a.graph, level)
 }
 
 func (a *App) SetImpactMode(on bool) {
@@ -185,7 +293,7 @@ func (a *App) SetImpactMode(on bool) {
 }
 
 func (a *App) analyse(id string) {
-	report, err := graph.Analyze(a.graph, id, a.settings.ImpactDepth)
+	report, err := graph.Analyze(a.view, id, a.settings.ImpactDepth)
 	if err != nil {
 		a.impact = nil
 		return
