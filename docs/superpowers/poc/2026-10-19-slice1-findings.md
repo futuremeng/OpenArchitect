@@ -417,3 +417,22 @@
   原生选择器」是后续切片的候选，本补记即其出处（spec §13 是风险登记，没有
   候选清单，不要往那里记）。教训：判「有没有某个能力」要先 grep 模块根，别只 grep `root`
   包——plan 就是这么漏的。
+
+## Task 22 外壳装配实测
+
+- 结论：机械可验项全过；三页路由、⌘K 经 content 轮询、扫描按钮起扫/空根目录跳设置页、
+  cancel→Idle 映射、nil cancel 安全性都由单测钉住。目检项（下述 2/3/4/5/7）待用户跑
+  `go tool mygo dev` 复核。
+- 数字：`go tool mygo dev` 首次构建 862 ms（M5/arm64）；新增 7 条测试全 PASS；
+  `CGO_ENABLED=1 go test ./internal/ui/ -race` 干净（29.2 s）；`CGO_ENABLED=0 go build ./...`
+  与 `go vet ./...` 全绿；`go test ./...` 全绿。
+- 影响与决策：
+  1. 冒烟：dev 起的是 `cmd/openarchitect`（产物 `.mygo/dev/darwin-arm64/OpenArchitect Dev.app`，
+     窗口进程存活，kill dev 后进程退出）——`mygo.json` 的 `main` 键生效。
+  2. 数据一致性：`~/Library/Application Support/OpenArchitect/` 只有一份
+     `openarchitect.db` + `window-state.json`，无 `-wal`/`-journal` 残留。
+  3. 分支的 `mygo.json` 还带着模板 identifier `com.example.tmpscaffold`（分支的 PoC-1
+     链与 main 的 `7f0e948` 是两条，main 的修正不在分支上）——本次一并改为
+     `com.futuremeng.openarchitect`；合并 main 时 mygo.json 会冲突，取分支这份（多 `main` 键）。
+  4. 遗留观察：main 工作树有一个 10/23 起的旧 dev 窗口进程（PID 1434）仍在运行，
+     与本任务无关，未处置。

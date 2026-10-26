@@ -382,3 +382,26 @@ func TestStatusLineCountsPackageErrors(t *testing.T) {
 		t.Fatalf("failed StatusLine = %q", got)
 	}
 }
+
+// TestFinishScanMapsCancellationToIdle 钉住 spec §10 第二行：取消不是失败。
+// 走 goroutine 再取消会是掷硬币（fixture 太小，扫描可能先跑完），所以直接喂
+// finishScan 那个哨兵——它才是"cancel → Idle"这条映射的实现。
+func TestFinishScanMapsCancellationToIdle(t *testing.T) {
+	a := newTestApp(t)
+	a.status, a.progress = StatusScanning, "正在解析 x"
+	_, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
+	a.finishScan(scanner.Report{}, context.Canceled)
+	if a.status != StatusIdle || a.err != nil || a.progress != "" {
+		t.Fatalf("status = %v err = %v progress = %q", a.status, a.err, a.progress)
+	}
+	if a.cancel != nil {
+		t.Fatal("finishScan must drop the cancel func; a stale one would kill the next scan")
+	}
+}
+
+// main.go 的 OnClosed 无条件调用 CancelScan，包括"开窗就关窗"那次——那时
+// a.cancel 还是 nil。这条测试就是那个 nil。
+func TestCancelScanIsSafeWithNothingInFlight(t *testing.T) {
+	newTestApp(t).CancelScan()
+}
