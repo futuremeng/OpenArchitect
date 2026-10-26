@@ -1,0 +1,85 @@
+{
+  // OpenArchitect 调试入口。CLI 与桌面端共用同一个 core（R1），
+  // 所以两边都可直接断点。用法：F5 或“运行和调试”面板里选配置。
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 桌面端（mygo 窗口应用）。纯 Go（purego），无需 CGO；
+      // 启动后会真开窗口，断点命中时窗口会冻结，属正常。
+      "name": "Desktop: OpenArchitect",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/openarchitect",
+      "console": "integratedTerminal"
+    },
+    {
+      // CLI：扫描当前打开的文件所在仓库（F5 前把光标放在目标仓的某个文件里）。
+      "name": "CLI: oac scan (current file's dir)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/oac",
+      "args": ["scan", "${fileDirname}"],
+      "console": "integratedTerminal"
+    },
+    {
+      // CLI：扫描整个工作区（扫 OpenArchitect 自己）。
+      "name": "CLI: oac scan (workspace)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/oac",
+      "args": ["scan", "${workspaceFolder}"],
+      "console": "integratedTerminal"
+    },
+    {
+      // CLI：impact 探针。args 里的元素 id 换成你要查的（默认用已实测的
+      // OpenLaw store.DB，入度 20，全库最高）。
+      "name": "CLI: oac impact (OpenLaw store.DB)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/oac",
+      "args": ["impact", "cmp:github.com/futuremeng/OpenLaw/store.DB", "--depth", "2"],
+      "console": "integratedTerminal"
+    },
+    {
+      // Go 测试：当前文件所在包（-count=1 绕过缓存，改动必重跑）。
+      "name": "Test: current package",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "args": ["-count=1"],
+      "console": "integratedTerminal"
+    },
+    {
+      // Go 测试：当前包 + race 检测（与 CI 对 ui/store 的要求一致；
+      // race 需要 CGO，这里显式打开）。
+      "name": "Test: current package (race)",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "buildFlags": "-race -tags=race",
+      "env": { "CGO_ENABLED": "1" },
+      "args": ["-count=1"],
+      "console": "integratedTerminal"
+    },
+    {
+      // DoD 探针：对真实库（默认 App 库）跑 headless 验收，
+      // 对应 slice1 §9.1 的 7 条断言。改 OAC_DOD_DB 可指向其它库。
+      "name": "Probe: DoD against real DB",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${workspaceFolder}/internal/ui",
+      "args": ["-run", "TestDoDProbeRealDB", "-v", "-count=1"],
+      "env": {
+        "OAC_DOD_DB": "${env:HOME}/Library/Application Support/OpenArchitect/openarchitect.db"
+      },
+      "console": "integratedTerminal"
+    }
+  ]
+}

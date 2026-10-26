@@ -1,0 +1,6 @@
+{
+  // 测试不吃缓存（与 launch.json 的 -count=1 一致）；
+  // race 需要 CGO，所以这里不全局锁 CGO_ENABLED，
+  // 需要时在 launch.json 的 race 配置里单独开。
+  "go.testFlags": ["-count=1"]
+}
