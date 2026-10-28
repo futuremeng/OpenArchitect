@@ -168,3 +168,21 @@ cytoscape neighborhood-highlight、G6 combo、d3-zoom 锚定数学）。建议�
 
 未落地的仍按原计划：4.2 的四个上游改动（⌘滚轮走 scale、`Camera()/SetCamera()`、
 `OnZoomAt`、`Hovered()`）打包成 fork PR；4.3 的 combo 分组框与规模门槛照旧。
+
+---
+
+## 7. 落地记录二（2026-10-27，4.2 上游四件收进 fork `gis-navigation` 分支）
+
+fork 侧（onevra `source/components/`，全部带契约测试，改坏必红）：
+
+| 项 | 落点 | 测试 |
+|---|---|---|
+| ⌘滚轮/捏合走 scale | `gesture.classify`：`out.Pinch = modified` 不再限 touchpad（Super-wheel 也是捏合）；`flow.navigate`：`!e.Pinch` 才进 OnZoom/OnZoomAt 钩子，捏合直接 `zoomAt` 锚定指针 | `TestClassify`/`TestScrollZoomMode`（Super-wheel 断言翻转）+ `TestPinchScalesUnderOnZoom`（含锚点不动点校验） |
+| `OnZoomAt(x, y, zoomIn)` | `flow.Options.OnZoomAt` 优先于 OnZoom；空白双击也带坐标 | `TestOnZoomAtReceivesThePointer` |
+| `Camera()/SetCamera()` | `flow.State`：Camera 读 shown；SetCamera 钳到 [minZoom,maxZoom]、立即生效、`userMoved=true`（重排不抢回） | `TestCameraRoundTrip`（含 relayout 不抢相机、越界钳制） |
+| `Hit(x, y)` / `Hovered()` | `flow.State` 公开包装内部 hit/hovered | `TestHitAndHovered` |
+
+app 侧（OpenArchitect）：`ZoomDepthAt` = `Hit` 命中则 `rememberPointer`（整体改写三段焦点记忆）再 `ZoomDepth`——滚轮在谁头上展开谁；焦点记忆加 `focusRepo` 段，anchor() 三层各补最弱回退（包组成员 `memberOf`、仓反查 `repoPkgPath`）。graphOptions 接 `OnZoomAt`（OnZoom 留作回退）。测试：`TestZoomDepthAtAnchorsUnderPointer`（真 flow 渲染 + 相机坐标反算 Hit）、`TestZoomDepthAtRepoGroupRewritesMemory`、`TestZoomDepthAtEmptySpaceIsDepthOnly`；四处变异（Pinch 门、Pinch 标记、Hit 悬停、focusRepo 回退）全部变红。
+
+依赖状态：fork 改动已提交并推送（onevra `gis-navigation` @ a3bbb6f），OpenArchitect
+`go.mod` 的 replace 升到伪版本 `v0.2026.13-0.20261028081121-a3bbb6f230ab`。

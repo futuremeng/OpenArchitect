@@ -157,4 +157,3 @@ func TestRepoViewButtonPinsAndJumpsToGraph(t *testing.T) {
 		t.Fatalf("the jump must pin the pick: GraphRepos = %v", a.settings.GraphRepos)
 	}
 }
-

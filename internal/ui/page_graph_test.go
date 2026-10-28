@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,9 @@ func TestGraphOptionsWireCallbacks(t *testing.T) {
 	}
 	if opts.OnZoom == nil {
 		t.Fatal("OnZoom must be wired: zoom gestures change depth, not scale")
+	}
+	if opts.OnZoomAt == nil {
+		t.Fatal("OnZoomAt must be wired: the depth change anchors under the pointer")
 	}
 	opts.Select(target)
 	if a.selected != target {
@@ -378,7 +382,6 @@ func TestGraphPageHidesPickerForSingleRepo(t *testing.T) {
 	}
 }
 
-
 // TestZoomDepthAnchorsSelectionAcrossLevels 钉住交互复盘 G2：换层不再把
 // 视野推平，选中跟着焦点记忆穿越三层——元素→包组→仓库→包组→元素，
 // 每一层落点都是「刚看的那个东西」在新深度里的对应体。
@@ -407,6 +410,79 @@ func TestZoomDepthAnchorsSelectionAcrossLevels(t *testing.T) {
 	a.ZoomDepth(true)
 	if a.Depth() != 2 || a.selected != basket {
 		t.Fatalf("zooming back to elements must land on the remembered element, got %q", a.selected)
+	}
+}
+
+// TestZoomDepthAtAnchorsUnderPointer 钉住 OnZoomAt 的 GIS 语义：滚轮在谁
+// 头上展开谁。fixture 先按焦点记忆落到 basket 包组，再把指针指到 orders
+// 包组滚深——落点是 orders 里的元素，不再是 basket。
+func TestZoomDepthAtAnchorsUnderPointer(t *testing.T) {
+	a := flowFixtureApp(t)
+	a.SetShowComponents(true)
+	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
+	tt.Frame()
+	tt.Advance(time.Second)
+	if !a.flowState.Ready() {
+		t.Fatal("flow did not become ready")
+	}
+	basket := model.ComponentID("example.com/x/internal/basket", "Basket")
+	a.Select(basket)
+	a.ZoomDepth(false)
+	if a.Depth() != 1 || a.selected != graph.PackageGroupID("example.com/x/internal/basket") {
+		t.Fatalf("package level anchor = %q at depth %d", a.selected, a.Depth())
+	}
+	tt.Frame()
+	tt.Advance(time.Second)
+	ordersPkg := graph.PackageGroupID("example.com/x/internal/orders")
+	x, y, ok := a.flowState.Position(ordersPkg)
+	if !ok {
+		t.Fatal("orders package group not laid out")
+	}
+	camX, camY, zoom := a.flowState.Camera()
+	vx := (x+cardWidth/2)*zoom + camX
+	vy := (y+cardHeight/2)*zoom + camY
+	if id := a.flowState.Hit(vx, vy); id != ordersPkg {
+		t.Fatalf("Hit at the orders group center = %q", id)
+	}
+	a.ZoomDepthAt(vx, vy, true)
+	orders := model.ComponentID("example.com/x/internal/orders", "Orders")
+	if a.Depth() != 2 || a.selected != orders {
+		t.Fatalf("pointer-anchored drill-in landed on %q at depth %d, want %q", a.selected, a.Depth(), orders)
+	}
+}
+
+// TestZoomDepthAtRepoGroupRewritesMemory 钉住悬停锚点的仓库组半边：指针
+// 在仓库组节点上整体改写焦点记忆（focusRepo），换层落点经 repoPkgPath
+// 反查回该仓——悬停语义对三层节点都成立。
+func TestZoomDepthAtRepoGroupRewritesMemory(t *testing.T) {
+	a := flowFixtureApp(t)
+	a.SetShowComponents(true)
+	a.zoomLevel = 0
+	a.refreshView()
+	repo := graph.RepoGroupID("repo:/x")
+	a.rememberPointer(repo)
+	if id := a.anchor(); id != repo {
+		t.Fatalf("repo-level anchor from focusRepo = %q, want %q", id, repo)
+	}
+	a.ZoomDepth(true)
+	if a.Depth() != 1 || !strings.HasPrefix(a.selected, graph.PackageGroupID("")) {
+		t.Fatalf("drill-in from repo memory landed on %q at depth %d, want a package group", a.selected, a.Depth())
+	}
+}
+
+// TestZoomDepthAtEmptySpaceIsDepthOnly: 指针在空白处时 ZoomDepthAt 与
+// ZoomDepth 无异——落点仍是焦点记忆，不是空白。
+func TestZoomDepthAtEmptySpaceIsDepthOnly(t *testing.T) {
+	a := flowFixtureApp(t)
+	a.SetShowComponents(true)
+	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
+	tt.Frame()
+	tt.Advance(time.Second)
+	basket := model.ComponentID("example.com/x/internal/basket", "Basket")
+	a.Select(basket)
+	a.ZoomDepthAt(1, 1, false)
+	if a.Depth() != 1 || a.selected != graph.PackageGroupID("example.com/x/internal/basket") {
+		t.Fatalf("empty-space scroll = %q at depth %d, want the remembered package", a.selected, a.Depth())
 	}
 }
 

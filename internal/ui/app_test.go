@@ -565,4 +565,3 @@ func TestZoomDepthWalksLevels(t *testing.T) {
 		t.Fatalf("depth must clamp at 2: %d", a.Depth())
 	}
 }
-

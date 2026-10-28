@@ -32,9 +32,13 @@ func (a *App) graphPage(c *ui.Context) {
 // graphOptions is split out of graphPage so a test can take the callbacks:
 // flow.View swallows Select and Open into its own hit-testing, which a headless
 // tester cannot click through. This is where DoD-2's wiring lives.
-// OnZoom is the map contract's other half: the wheel, the trackpad scroll,
-// the pinch and the empty-space double-click all change *depth* — the
-// camera's scale stays put, so the type size in view never changes.
+// OnZoom is the map contract's other half: the wheel, the trackpad scroll
+// and the empty-space double-click all change *depth* — the camera's scale
+// stays put, so the type size in view never changes. OnZoomAt (the fork's
+// pointer-aware variant) wins over it: the depth change anchors on whatever
+// node the gesture happened over. A pinch or a ⌘-scroll stays a camera
+// zoom: that is the deliberate scale gesture, and it is what feeds the LOD
+// stairs in nodeCard.
 func (a *App) graphOptions(data flow.Data) flow.Options {
 	return flow.Options{
 		Label:      fmt.Sprintf("%d 个元素，%d 条关系", len(data.Nodes), len(data.Edges)),
@@ -42,6 +46,7 @@ func (a *App) graphOptions(data flow.Data) flow.Options {
 		Direction:  flow.LeftToRight,
 		Navigation: flow.NavigationMap,
 		OnZoom:     a.ZoomDepth,
+		OnZoomAt:   a.ZoomDepthAt,
 		Selected:   a.selected,
 		Select:     a.Select,
 		Open:       a.Open,

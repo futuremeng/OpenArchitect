@@ -73,11 +73,11 @@ func Aggregate(g *Graph, level Level) *Graph {
 			name = base.Name
 		}
 		elements = append(elements, model.Element{
-			ID:   gid,
-			Type: namedType(named[gid]),
-			Name: name,
+			ID:          gid,
+			Type:        namedType(named[gid]),
+			Name:        name,
 			Description: fmt.Sprintf("%d 个元素", count),
-			RepoID: named[gid].RepoID,
+			RepoID:      named[gid].RepoID,
 		})
 	}
 

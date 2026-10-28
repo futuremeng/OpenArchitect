@@ -78,11 +78,13 @@ type App struct {
 	impact      *graph.ImpactReport
 	commandOpen bool
 
-	// focusElement / focusPackage 是深度锚点的空间记忆：Select 记下最近选中的
-	// 元素与包组，ZoomDepth 换层后据此把相机 Reveal 到新深度里的对应节点——
+	// focusElement / focusPackage / focusRepo 是深度锚点的空间记忆：Select
+	// 记下最近选中的元素与包组，ZoomDepth 换层后据此把相机 Reveal 到新深度
+	// 里的对应节点——
 	// 「盯着 store 深入，落点还是 store」，不再每次把视野推平。
 	focusElement string
 	focusPackage string
+	focusRepo    string
 	// neighborFocus 选中节点时把非 1-hop 邻居淡出（cytoscape neighborhood
 	// highlight 的语义），默认开；影响模式的淡出集优先于它。
 	neighborFocus bool
@@ -192,16 +194,32 @@ func (a *App) Select(id string) {
 		a.drillInto = ""
 		return
 	}
+	a.remember(id)
+	if a.impactMode {
+		a.analyse(id)
+	}
+}
+
+// remember 只写焦点记忆，不碰选中——深度链上 anchor() 换层调的 Select
+// 靠它续命，仓库组节点（sys: 前缀）也从这里进记忆。
+func (a *App) remember(id string) {
 	switch {
+	case strings.HasPrefix(id, graph.RepoGroupID("")):
+		a.focusRepo = strings.TrimPrefix(id, graph.RepoGroupID(""))
 	case strings.HasPrefix(id, graph.PackageGroupID("")):
 		a.focusPackage = id
 	case model.PkgPathOf(id) != "":
 		a.focusElement = id
 		a.focusPackage = graph.PackageGroupID(model.PkgPathOf(id))
 	}
-	if a.impactMode {
-		a.analyse(id)
-	}
+}
+
+// rememberPointer 是滚轮悬停锚点的写法：指针指到哪，哪就是最新的注视，
+// 三段记忆整体改写。Select 不清旧记忆是因为深度链要靠它穿越，悬停没有
+// 这个包袱——「在指针底下展开」（GIS 语义）要的就是覆盖。
+func (a *App) rememberPointer(id string) {
+	a.focusElement, a.focusPackage, a.focusRepo = "", "", ""
+	a.remember(id)
 }
 
 // SetNeighborFocus toggles the selection neighborhood fade.
@@ -284,19 +302,38 @@ func (a *App) ZoomDepth(zoomIn bool) {
 	}
 }
 
+// ZoomDepthAt 是 flow.Options.OnZoomAt 的落点：滚轮在谁头上，就展开谁
+// （GIS 语义）。指针命中节点时先把焦点记忆整体改写成那个节点，anchor()
+// 自然落过去；指针在空白处则与 ZoomDepth 无异。
+func (a *App) ZoomDepthAt(x, y float32, zoomIn bool) {
+	if id := a.flowState.Hit(x, y); id != "" {
+		a.rememberPointer(id)
+	}
+	a.ZoomDepth(zoomIn)
+}
+
 // anchor 把焦点记忆映射到当前深度视图里的节点 id，映射不到返回 ""。
 // 元素层直接命中；包层用元素所属包；仓库层经原始图查元素的 RepoID
-// （包组节点是聚合产物，原始图里没有，只能按成员反查）。
+// （包组节点是聚合产物，原始图里没有，只能按成员反查）。focusRepo 是
+// 悬停锚点留下的最弱记忆：只有前两者映射不到时才轮到你。
 func (a *App) anchor() string {
 	switch a.Depth() {
 	case 2:
 		if _, ok := a.view.Element(a.focusElement); ok {
 			return a.focusElement
 		}
+		if a.focusElement == "" && a.focusPackage != "" {
+			if id := a.memberOf(a.focusPackage); id != "" {
+				return id
+			}
+		}
 	case 1:
 		pkg := a.focusPackage
 		if pkg == "" && a.focusElement != "" {
 			pkg = graph.PackageGroupID(model.PkgPathOf(a.focusElement))
+		}
+		if pkg == "" && a.focusRepo != "" {
+			pkg = graph.PackageGroupID(a.repoPkgPath(a.focusRepo))
 		}
 		if _, ok := a.view.Element(pkg); ok {
 			return pkg
@@ -315,10 +352,36 @@ func (a *App) anchor() string {
 				}
 			}
 		}
+		if repoID == "" {
+			repoID = a.focusRepo
+		}
 		if repoID != "" {
 			if _, ok := a.view.Element(graph.RepoGroupID(repoID)); ok {
 				return graph.RepoGroupID(repoID)
 			}
+		}
+	}
+	return ""
+}
+
+// memberOf 返回包组节点 pkg 在当前视图里的任一带路径成员（悬停锚点
+// 落在包组上、深入元素层时的落点）。
+func (a *App) memberOf(pkg string) string {
+	path := strings.TrimPrefix(pkg, graph.PackageGroupID(""))
+	for _, el := range a.view.Elements() {
+		if model.PkgPathOf(el.ID) == path {
+			return el.ID
+		}
+	}
+	return ""
+}
+
+// repoPkgPath 返回仓 repoID 在合并图里的任一带路径包的包路径（悬停锚点
+// 落在仓库组上、深入包层时的落点）。
+func (a *App) repoPkgPath(repoID string) string {
+	for _, el := range a.graph.Elements() {
+		if el.RepoID == repoID && model.PkgPathOf(el.ID) != "" {
+			return model.PkgPathOf(el.ID)
 		}
 	}
 	return ""

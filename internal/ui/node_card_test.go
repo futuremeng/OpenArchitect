@@ -10,7 +10,11 @@ import (
 )
 
 func TestTruncateMiddle(t *testing.T) {
-	cases := []struct{ in string; keep int; want string }{
+	cases := []struct {
+		in   string
+		keep int
+		want string
+	}{
 		{"Basket", 8, "Basket"},
 		{"abcdefghij", 5, "ab…ij"},
 		{"example.com/cart/internal/basket", 11, "examp…asket"},

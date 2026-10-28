@@ -50,10 +50,10 @@ func (a *App) flowData() flow.Data {
 			label = graph.GroupLabel(el.ID)
 		}
 		node := flow.Node{
-			ID:      el.ID,
-			Label:   label,
-			Width:   cardWidth,
-			Height:  cardHeight,
+			ID:     el.ID,
+			Label:  label,
+			Width:  cardWidth,
+			Height: cardHeight,
 			// LOD 读的是当前相机 scale（flow.State.Zoom 公开可得）：
 			// 相机缓动期间 flow 每帧重建卡片，档位跟着换，尺寸不变。
 			Content: func(c *ui.Context) { nodeCard(c, el, a.flowState.Zoom()) },
