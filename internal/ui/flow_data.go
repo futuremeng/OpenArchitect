@@ -54,7 +54,9 @@ func (a *App) flowData() flow.Data {
 			Label:   label,
 			Width:   cardWidth,
 			Height:  cardHeight,
-			Content: func(c *ui.Context) { nodeCard(c, el) },
+			// LOD 读的是当前相机 scale（flow.State.Zoom 公开可得）：
+			// 相机缓动期间 flow 每帧重建卡片，档位跟着换，尺寸不变。
+			Content: func(c *ui.Context) { nodeCard(c, el, a.flowState.Zoom()) },
 		}
 		if keep != nil {
 			node.Muted = !keep[el.ID]
@@ -79,16 +81,33 @@ func (a *App) flowData() flow.Data {
 
 // quietSet is the ids that stay bright this frame, or nil when nothing should
 // fade. Computed once per flowData call: doing it per node would run one BFS
-// per card.
+// per card. The impact set wins over the neighborhood fade: both answer
+// "what matters around here", and the impact report is the wider, explicit
+// answer.
 func (a *App) quietSet() map[string]bool {
-	if !a.impactMode || a.impact == nil {
-		return nil
+	if a.impactMode {
+		if a.impact == nil {
+			return nil
+		}
+		keep := make(map[string]bool, len(a.impact.Upstream)+len(a.impact.Downstream)+1)
+		for _, id := range a.impact.AffectedIDs() {
+			keep[id] = true
+		}
+		return keep
 	}
-	keep := make(map[string]bool, len(a.impact.Upstream)+len(a.impact.Downstream)+1)
-	for _, id := range a.impact.AffectedIDs() {
-		keep[id] = true
+	// 邻域聚焦：选中一个节点，它和 1-hop 邻居保持亮，其余淡出——
+	// 「改这里会坏哪里」的第一眼答案，不必先打开影响模式。
+	if a.neighborFocus && a.selected != "" {
+		keep := map[string]bool{a.selected: true}
+		for _, hit := range a.view.Upstream(a.selected, 1) {
+			keep[hit.Element.ID] = true
+		}
+		for _, hit := range a.view.Downstream(a.selected, 1) {
+			keep[hit.Element.ID] = true
+		}
+		return keep
 	}
-	return keep
+	return nil
 }
 
 // flowEdges is the unfiltered App→edges translation; the visibility fold

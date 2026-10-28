@@ -116,6 +116,8 @@ func (a *App) Reload(ctx context.Context) error {
 	}
 	a.refreshView()
 	a.selected, a.drillInto, a.impact = "", "", nil
+	// 新图配旧锚点没有意义：焦点记忆和选中一起清。
+	a.focusElement, a.focusPackage = "", ""
 	return nil
 }
 

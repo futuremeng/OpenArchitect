@@ -26,6 +26,10 @@ const (
 // no scanner ever emits it, so it cannot collide with stored ids.
 func PackageGroupID(pkgPath string) string { return "pkg:" + pkgPath }
 
+// RepoGroupID is the pseudo-element id a repo node carries at LevelRepo —
+// one canonical group per repo, keyed on the owning repo id (see groupByRepo).
+func RepoGroupID(repoID string) string { return "sys:" + repoID }
+
 // Aggregate folds g down to level. Coarser levels keep only the
 // depends_on/calls edges (contains is structure *inside* one repo and has
 // nothing to say between packages or repos), merge parallel edges between
@@ -139,7 +143,7 @@ func groupByRepo(el model.Element) (string, bool) {
 	if el.RepoID == "" {
 		return "", false
 	}
-	return "sys:" + el.RepoID, true
+	return RepoGroupID(el.RepoID), true
 }
 
 // groupLabel shortens a package group id for display: the last two path

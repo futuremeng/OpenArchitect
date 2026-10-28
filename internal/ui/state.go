@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/oneo-me/onevra/source/components/command"
 	"github.com/oneo-me/onevra/source/components/flow"
@@ -77,6 +78,15 @@ type App struct {
 	impact      *graph.ImpactReport
 	commandOpen bool
 
+	// focusElement / focusPackage 是深度锚点的空间记忆：Select 记下最近选中的
+	// 元素与包组，ZoomDepth 换层后据此把相机 Reveal 到新深度里的对应节点——
+	// 「盯着 store 深入，落点还是 store」，不再每次把视野推平。
+	focusElement string
+	focusPackage string
+	// neighborFocus 选中节点时把非 1-hop 邻居淡出（cytoscape neighborhood
+	// highlight 的语义），默认开；影响模式的淡出集优先于它。
+	neighborFocus bool
+
 	// showComponents is the type-level fold switch: the default is the
 	// Container layer only, per spec §12 row 4's readability branch. PoC-4
 	// measured the fit zoom (300 nodes → 0.1348), which scales a 168×46 card
@@ -109,6 +119,7 @@ func NewApp(db *store.DB) *App {
 		view:           graph.Build(nil, nil),
 		zoomLevel:      -1,
 		showComponents: false,
+		neighborFocus:  true,
 		post:           func(fn func()) { fn() },
 	}
 }
@@ -159,17 +170,21 @@ func (a *App) Open(id string) {
 	if _, ok := a.view.Element(id); !ok {
 		if a.setDepth(2) {
 			a.refreshView()
-			a.flowState.Fit()
 		}
 	}
 	a.drillInto = id
 	if a.selected != id {
 		a.Select(id)
 	}
+	// 搜索结果就是锚点：相机对准它，而不是 Fit 把全图推平。Reveal 对不在
+	// 视图里的 id 是 no-op，与旧代码的 Fit 相比不会更糟。
+	a.flowState.Reveal(id)
 }
 
 // Select is flow's single-click handler; "" comes from a click on empty
-// space and closes the drawer (spec §9.3).
+// space and closes the drawer (spec §9.3). It is also the single writer of
+// the focus memory: whatever the user last looked at is what the next depth
+// change anchors to.
 func (a *App) Select(id string) {
 	a.selected = id
 	if id == "" {
@@ -177,10 +192,20 @@ func (a *App) Select(id string) {
 		a.drillInto = ""
 		return
 	}
+	switch {
+	case strings.HasPrefix(id, graph.PackageGroupID("")):
+		a.focusPackage = id
+	case model.PkgPathOf(id) != "":
+		a.focusElement = id
+		a.focusPackage = graph.PackageGroupID(model.PkgPathOf(id))
+	}
 	if a.impactMode {
 		a.analyse(id)
 	}
 }
+
+// SetNeighborFocus toggles the selection neighborhood fade.
+func (a *App) SetNeighborFocus(on bool) { a.neighborFocus = on }
 
 // SetGraphRepos 把图页的仓库过滤器设为 ids 并持久化（空 = 全选，所有带
 // 快照的仓都进合并视图）。它走 Reload 而不是就地换图：库是唯一的真相源，
@@ -241,6 +266,8 @@ func (a *App) LevelName() string {
 }
 
 // ZoomDepth 是滚轮/双击/±按钮的统一入口：缩放改的是深度，不是尺寸。
+// 换层的落点不再是全图 Fit，而是深度锚点（anchor）——用户刚看的东西在
+// 新深度里的对应体；没有锚点才退回 Fit。
 func (a *App) ZoomDepth(zoomIn bool) {
 	step := 1
 	if !zoomIn {
@@ -248,8 +275,53 @@ func (a *App) ZoomDepth(zoomIn bool) {
 	}
 	if a.setDepth(a.Depth() + step) {
 		a.refreshView()
+		if id := a.anchor(); id != "" {
+			a.Select(id)
+			a.flowState.Reveal(id)
+			return
+		}
 		a.flowState.Fit()
 	}
+}
+
+// anchor 把焦点记忆映射到当前深度视图里的节点 id，映射不到返回 ""。
+// 元素层直接命中；包层用元素所属包；仓库层经原始图查元素的 RepoID
+// （包组节点是聚合产物，原始图里没有，只能按成员反查）。
+func (a *App) anchor() string {
+	switch a.Depth() {
+	case 2:
+		if _, ok := a.view.Element(a.focusElement); ok {
+			return a.focusElement
+		}
+	case 1:
+		pkg := a.focusPackage
+		if pkg == "" && a.focusElement != "" {
+			pkg = graph.PackageGroupID(model.PkgPathOf(a.focusElement))
+		}
+		if _, ok := a.view.Element(pkg); ok {
+			return pkg
+		}
+	default:
+		repoID := ""
+		if el, ok := a.graph.Element(a.focusElement); ok {
+			repoID = el.RepoID
+		}
+		if repoID == "" && a.focusPackage != "" {
+			pkg := strings.TrimPrefix(a.focusPackage, graph.PackageGroupID(""))
+			for _, el := range a.graph.Elements() {
+				if model.PkgPathOf(el.ID) == pkg && el.RepoID != "" {
+					repoID = el.RepoID
+					break
+				}
+			}
+		}
+		if repoID != "" {
+			if _, ok := a.view.Element(graph.RepoGroupID(repoID)); ok {
+				return graph.RepoGroupID(repoID)
+			}
+		}
+	}
+	return ""
 }
 
 // setDepth 钳制并写入深度，返回是否真的变了。

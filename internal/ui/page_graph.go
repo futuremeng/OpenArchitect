@@ -13,6 +13,8 @@ import (
 
 func (a *App) graphPage(c *ui.Context) {
 	t := c.Theme()
+	// 快捷键先于 flowData：Esc 清掉的选中要在这一帧就反映到抽屉与淡出。
+	a.graphShortcuts(c)
 	data := a.flowData()
 	ui.Column(c).Fill().Padding(sidebar.HeaderHeight(c)+8, 12, 12, 12).
 		Gap(t.Space(2)).Children(func() {
@@ -81,6 +83,12 @@ func (a *App) mapHeader(c *ui.Context) {
 			a.SetImpactMode(a.impactMode)
 		}
 		components.Text(c, "影响范围").FontSize(t.Rem(.85)).TextColor(t.TextMuted)
+		// 邻域聚焦：选中节点的 1-hop 保持亮、其余淡出，默认开（切片 2
+		// 交互复盘 G4）。开关写法照抄影响模式：字段直绑 + Changed 走 setter。
+		if ui.Switch(c, &a.neighborFocus).Label("邻域聚焦模式").Changed() {
+			a.SetNeighborFocus(a.neighborFocus)
+		}
+		components.Text(c, "邻域聚焦").FontSize(t.Rem(.85)).TextColor(t.TextMuted)
 		// 深度角标：滚轮/双击改的是层级不是尺寸，这里得有一处把当前层
 		// 说出来，否则"缩放没放大"会被当成坏了。
 		components.Text(c, a.LevelName()).FontSize(t.Rem(.85)).TextColor(t.TextMuted)
@@ -133,6 +141,27 @@ func pick(cond bool, ifTrue, ifFalse ui.Color) ui.Color {
 	return ifFalse
 }
 
+// graphShortcuts 是图页交互的键盘形态：Esc 清选中、F 适应窗口、
+// ⌘=/⌘− 调缩放（与 overlay 的放大/缩小按钮同一入口）。命令面板打开时
+// 不注册——Escape 归对话框，⌘K 由 commandPalette 自己处理。
+func (a *App) graphShortcuts(c *ui.Context) {
+	if a.commandOpen {
+		return
+	}
+	if c.Shortcut(0, ui.KeyEscape) && a.selected != "" {
+		a.Select("")
+	}
+	if c.Shortcut(0, ui.KeyF) {
+		a.flowState.Fit()
+	}
+	if c.Shortcut(ui.Cmd, ui.KeyEqual) {
+		a.flowState.ZoomIn()
+	}
+	if c.Shortcut(ui.Cmd, ui.KeyMinus) {
+		a.flowState.ZoomOut()
+	}
+}
+
 func (a *App) zoomControls(c *ui.Context) {
 	t := c.Theme()
 	row := ui.Row(c).Gap(t.Space(1)).Padding(t.Space(1)).Radius(t.Radius).Background(t.Surface)
@@ -143,10 +172,14 @@ func (a *App) zoomControls(c *ui.Context) {
 			apply func()
 		}{
 			{"适应窗口", lucide.Maximize, a.flowState.Fit},
-			// 缩放改深度不改尺寸：滚轮之外，这对按钮是同一入口的键盘
-			// 形态（ZoomDepth 也是 flow.Options.OnZoom 的落点）。
-			{"深入一层", lucide.ZoomIn, func() { a.ZoomDepth(true) }},
-			{"上一层", lucide.ZoomOut, func() { a.ZoomDepth(false) }},
+			// 缩放（scale）与深度是两条通道：滚轮/双击走深度
+			// （flow.Options.OnZoom 的落点），这对按钮和 ⌘=/⌘− 走
+			// 相机缩放——低倍读不出字时的救生圈（flow 的 ZoomIn/
+			// ZoomOut 是公开 API，绕过了 OnZoom 的劫持）。
+			{"放大", lucide.ZoomIn, a.flowState.ZoomIn},
+			{"缩小", lucide.ZoomOut, a.flowState.ZoomOut},
+			{"深入一层", lucide.LayersPlus, func() { a.ZoomDepth(true) }},
+			{"上一层", lucide.LayersMinus, func() { a.ZoomDepth(false) }},
 		} {
 			button := sidebar.IconButton(c, control.icon(), control.label)
 			if button.Clicked() {

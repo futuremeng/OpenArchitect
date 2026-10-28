@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/oneo-me/onevra/source/components/flow"
 
+	"github.com/futuremeng/OpenArchitect/internal/core/graph"
 	"github.com/futuremeng/OpenArchitect/internal/core/model"
 	"github.com/futuremeng/OpenArchitect/internal/scanner"
 )
@@ -377,3 +378,104 @@ func TestGraphPageHidesPickerForSingleRepo(t *testing.T) {
 	}
 }
 
+
+// TestZoomDepthAnchorsSelectionAcrossLevels 钉住交互复盘 G2：换层不再把
+// 视野推平，选中跟着焦点记忆穿越三层——元素→包组→仓库→包组→元素，
+// 每一层落点都是「刚看的那个东西」在新深度里的对应体。
+func TestZoomDepthAnchorsSelectionAcrossLevels(t *testing.T) {
+	a := flowFixtureApp(t)
+	a.SetShowComponents(true)
+	basket := model.ComponentID("example.com/x/internal/basket", "Basket")
+	pkg := graph.PackageGroupID("example.com/x/internal/basket")
+	repo := graph.RepoGroupID("repo:/x")
+	a.Select(basket)
+	if a.Depth() != 2 {
+		t.Fatalf("single-repo fixture should start at element level, got %d", a.Depth())
+	}
+	a.ZoomDepth(false)
+	if a.Depth() != 1 || a.selected != pkg {
+		t.Fatalf("package level anchor = %q at depth %d, want %q", a.selected, a.Depth(), pkg)
+	}
+	a.ZoomDepth(false)
+	if a.Depth() != 0 || a.selected != repo {
+		t.Fatalf("repo level anchor = %q at depth %d, want %q", a.selected, a.Depth(), repo)
+	}
+	a.ZoomDepth(true)
+	if a.Depth() != 1 || a.selected != pkg {
+		t.Fatalf("zooming back in must land on the remembered package, got %q", a.selected)
+	}
+	a.ZoomDepth(true)
+	if a.Depth() != 2 || a.selected != basket {
+		t.Fatalf("zooming back to elements must land on the remembered element, got %q", a.selected)
+	}
+}
+
+// TestZoomDepthWithoutSelectionFallsBackClean: 没有焦点记忆时换层不碰
+// 选中（Fit 的半边在相机里，单测不追动画）。
+func TestZoomDepthWithoutSelectionFallsBackClean(t *testing.T) {
+	a := flowFixtureApp(t)
+	a.SetShowComponents(true)
+	a.ZoomDepth(false)
+	if a.Depth() != 1 || a.selected != "" {
+		t.Fatalf("depth/selected = %d/%q, want 1 and no selection", a.Depth(), a.selected)
+	}
+}
+
+// TestGraphPageEscapeClearsSelection 走真键盘事件：Esc 清选中，抽屉拆掉；
+// 命令面板开着时 Esc 归对话框，图上的选中不能被顺手清掉。
+func TestGraphPageEscapeClearsSelection(t *testing.T) {
+	a := newFlowApp(t)
+	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
+	tt.Frame()
+	a.Select(model.ComponentID("example.com/x/internal/basket", "Basket"))
+	tt.Frame()
+	if !tt.HasText("收起详情") {
+		t.Fatalf("drawer missing after Select, texts = %v", tt.Texts())
+	}
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if a.selected != "" {
+		t.Fatalf("Escape must clear the selection, got %q", a.selected)
+	}
+	if tt.HasText("收起详情") {
+		t.Fatalf("drawer must unmount on Escape, texts = %v", tt.Texts())
+	}
+	a.Select(model.ComponentID("example.com/x/internal/orders", "Orders"))
+	tt.Frame()
+	a.SetCommandOpen(true)
+	tt.Frame()
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	if a.selected == "" {
+		t.Fatal("with the palette open Escape belongs to the dialog, not the map")
+	}
+}
+
+// TestZoomControlsSplitScaleFromDepth 钉住两条通道的分离：放大/缩小按钮
+// 改相机 scale（Zoom() 变大），深入/上一层按钮改深度，互不串线。
+func TestZoomControlsSplitScaleFromDepth(t *testing.T) {
+	a := newFlowApp(t)
+	tt := ui.NewTester(func(c *ui.Context) { a.graphPage(c) }, 900, 600)
+	tt.Frame()
+	before := a.flowState.Zoom()
+	if err := tt.Click("放大"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.flowState.Zoom() <= before {
+		t.Fatalf("放大 must scale the camera: %g -> %g", before, a.flowState.Zoom())
+	}
+	depth := a.Depth()
+	if err := tt.Click("上一层"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.Depth() != depth-1 {
+		t.Fatalf("上一层 must step depth %d -> %d, got %d", depth, depth-1, a.Depth())
+	}
+	tt.Key(ui.Cmd, ui.KeyEqual)
+	tt.Frame()
+	if a.flowState.Zoom() <= 0 {
+		t.Fatalf("⌘= must keep scaling: zoom = %g", a.flowState.Zoom())
+	}
+}

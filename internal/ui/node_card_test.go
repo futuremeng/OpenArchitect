@@ -62,11 +62,41 @@ func TestNodeCardIsTwoTextLines(t *testing.T) {
 		Type: model.TypeComponent,
 		Name: "Basket",
 	}
-	tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el) }, 220, 60)
+	tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, 1) }, 220, 60)
 	if !tt.HasText("Basket") {
 		t.Fatalf("card must show the type name, texts = %v", tt.Texts())
 	}
 	if got := len(tt.Texts()); got != 2 {
 		t.Fatalf("a card must stay at two text lines, got %d: %v", got, tt.Texts())
+	}
+}
+
+// TestNodeCardLODStairs 钉住 spec §9.5 分级绘制的三个档位：低倍只剩一颗
+// 点（0 条文本），中倍只剩名字（1 条），高倍才是名字+包路径（2 条）。
+// 阈值两侧各取一点，把 lodDot/lodFull 的边界也钉住。
+func TestNodeCardLODStairs(t *testing.T) {
+	el := model.Element{
+		ID:   "cmp:example.com/cart/internal/basket.Basket",
+		Type: model.TypeComponent,
+		Name: "Basket",
+	}
+	for _, tc := range []struct {
+		zoom float32
+		want int
+	}{
+		{0.13, 0}, // PoC-4 的 300 节点 fit zoom：只剩点
+		{lodDot - 0.01, 0},
+		{lodDot, 1},
+		{lodFull - 0.01, 1},
+		{lodFull, 2},
+		{1.5, 2},
+	} {
+		tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, tc.zoom) }, 220, 60)
+		if got := len(tt.Texts()); got != tc.want {
+			t.Errorf("zoom %g: text lines = %d, want %d: %v", tc.zoom, got, tc.want, tt.Texts())
+		}
+	}
+	if tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, lodDot) }, 220, 60); !tt.HasText("Basket") {
+		t.Fatalf("the icon level must still name the node, texts = %v", tt.Texts())
 	}
 }

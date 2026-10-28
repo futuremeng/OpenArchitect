@@ -80,7 +80,7 @@ func TestFlowDataSystemLabel(t *testing.T) {
 func TestQuietSetNilWithoutImpactMode(t *testing.T) {
 	a := newFlowApp(t)
 	if a.quietSet() != nil {
-		t.Fatal("no impact mode means nothing fades")
+		t.Fatal("no impact mode and no selection means nothing fades")
 	}
 	a.impactMode = true
 	if a.quietSet() != nil {
@@ -91,6 +91,73 @@ func TestQuietSetNilWithoutImpactMode(t *testing.T) {
 		if n.Muted {
 			t.Fatalf("node %s muted with no report", n.ID)
 		}
+	}
+}
+
+// TestQuietSetNeighborhoodFocus 钉住交互复盘 G4 的默认行为：选中一个节点，
+// 它和 1-hop 邻居保持亮，其余淡出；开关关掉后一切恢复全亮。fixture 里
+// Basket 的上游是 Orders（depends_on）与 api（calls）、下游是 Item（calls）；
+// System 只有 contains 边连出去，bfs 白名单（spec §8.2）不让它一跳进集。
+func TestQuietSetNeighborhoodFocus(t *testing.T) {
+	a := newFlowApp(t)
+	basket := model.ComponentID("example.com/x/internal/basket", "Basket")
+	if !a.neighborFocus {
+		t.Fatal("neighborhood focus is on by default (interaction review G4)")
+	}
+	a.Select(basket)
+	keep := a.quietSet()
+	if keep == nil {
+		t.Fatal("a selection must produce a keep set")
+	}
+	for _, id := range []string{
+		basket,
+		model.ComponentID("example.com/x/internal/orders", "Orders"),
+		model.ContainerID("example.com/x/cmd/api"),
+		model.ComponentID("example.com/x/internal/basket", "Item"),
+	} {
+		if !keep[id] {
+			t.Fatalf("%s must stay lit as the selection or a 1-hop neighbour: %v", id, keep)
+		}
+	}
+	if keep[model.SystemID("example.com/x")] {
+		t.Fatal("System is 2 hops away through a contains wall: it must fade")
+	}
+	muted := map[string]bool{}
+	for _, n := range a.flowData().Nodes {
+		muted[n.ID] = n.Muted
+	}
+	if muted[basket] || !muted[model.SystemID("example.com/x")] {
+		t.Fatalf("flowData must carry the fade: %v", muted)
+	}
+	a.SetNeighborFocus(false)
+	if a.quietSet() != nil {
+		t.Fatal("with the switch off, nothing may fade")
+	}
+}
+
+// TestQuietSetImpactWinsOverNeighborhood: 影响模式的淡出集优先——同一个
+// 选中，影响报告（深度 N）比 1-hop 宽。api 的下游链 api→Basket→Item，
+// Item 只在影响集里；关掉影响模式后同一个选中只剩 1-hop。
+func TestQuietSetImpactWinsOverNeighborhood(t *testing.T) {
+	a := newFlowApp(t)
+	api := model.ContainerID("example.com/x/cmd/api")
+	item := model.ComponentID("example.com/x/internal/basket", "Item")
+	if a.settings.ImpactDepth < 2 {
+		a.settings.ImpactDepth = 2
+	}
+	a.impactMode = true
+	a.Select(api) // Select 在影响模式下顺手算报告
+	keep := a.quietSet()
+	if keep == nil {
+		t.Fatal("impact mode with a centre must produce a keep set")
+	}
+	if !keep[item] {
+		t.Fatalf("the depth-2 impact set must reach Item (api→Basket→Item): %v", keep)
+	}
+	a.SetImpactMode(false)
+	keep = a.quietSet()
+	if keep == nil || keep[item] {
+		t.Fatalf("outside impact mode the keep set is 1-hop only: %v", keep)
 	}
 }
 
