@@ -17,7 +17,20 @@ go build ./cmd/oac             # headless CLI
 oac sync ~/code                # 发现仓库、检入漂移、记录 commit 与归因
 oac graph <repo-id> --json     # 架构图数据
 oac impact <element-id> -d 2   # 改这里会坏哪里
+oac update --check             # 查询新版本（不带 --check 直接安装）
 ```
+
+## 安装与保持更新
+
+从 [GitHub Releases](../../releases) 下载对应芯片的 tar.gz（arm64 / amd64），
+解压出 `oac` 与 `openarchitect` 放进 PATH 即可。之后的更新闭环：
+
+- 发版：推 `v*` 标签 → CI 自动构建双架构、发 Release（附 sha256 checksums，
+  说明取自 CHANGELOG；标签与版本常量不一致会直接失败）。
+- 消费：`oac update` 或桌面 app 设置页「检查更新 / 安装更新」。下载先验
+  checksum 再落盘，换身用 rename 原子替换、失败回滚；**重启后生效**。
+- 更新只在用户明确点下时联网，自动观测路径永远离线（I2′）。
+- 仓库若为私有，检查前设 `OPENARCHITECT_GITHUB_TOKEN` 即可。
 
 ## 文档
 

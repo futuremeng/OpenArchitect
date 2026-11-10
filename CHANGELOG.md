@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.0（未发布）
+
+发布闭环：tag → CI Release → 应用内自更新。
+
+- **GitHub Releases 自动化**（`release.yml`）：推 `v*` 标签构建 darwin
+  arm64/amd64 双包 + sha256 checksums；发布说明直接取 CHANGELOG 小节；
+  git tag 与版本常量不一致直接断在 CI
+- **`oac update [--check]`**：查询 GitHub Releases，下载验 checksum 后
+  原子替换自身二进制（rename 换身、失败回滚）；go-run 出来的临时二进制
+  会被拒绝，不会误伤
+- **设置页「版本与更新」**：显示版本、检查更新按钮、发现新版给安装按钮，
+  装完明说重启后生效；检查/安装走后台，不碰扫描闸门与数据库
+- 版本号单一来源 `internal/version`；网络只在用户明确触发时出现（I2′ 不变）
+
 ## 1.0.0 — 2026-11-10
 
 多软件项目的架构观测 + 智能体工作动态观测的第一个完整版本。
