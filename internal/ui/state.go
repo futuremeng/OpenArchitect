@@ -14,6 +14,7 @@ import (
 	"github.com/futuremeng/OpenArchitect/internal/core/graph"
 	"github.com/futuremeng/OpenArchitect/internal/core/model"
 	"github.com/futuremeng/OpenArchitect/internal/core/store"
+	"github.com/futuremeng/OpenArchitect/internal/update"
 )
 
 // Page is which page the content region shows. sidebar.Shell has no page
@@ -72,6 +73,17 @@ type App struct {
 	// 非空时 settingsSaved 必为 false —— saveRow 里同一次赋值保证这一点。
 	settingsSaved bool
 	settingsErr   error
+
+	// 版本与更新（1.1 发布闭环）。update* 状态只在主线程写（纪律 1），
+	// 后台 goroutine 只通过 post 交回结果——和 sync 同一套路。
+	updateState     string // "", "checking", "installing"
+	updateChecked   bool   // 一次成功的"已是最新"回执
+	updateLatest    string // 有新版时的版本号，空 = 没有
+	updateRelease   *update.Release
+	updateErr       error
+	updateInstalled bool
+	// updateChecker 让测试能把检查指到假服务器；nil = 真实 GitHub。
+	updateChecker *update.Checker
 
 	selected    string
 	drillInto   string

@@ -10,6 +10,7 @@ import (
 	"github.com/oneo-me/onevra/source/shells/sidebar"
 
 	"github.com/futuremeng/OpenArchitect/internal/config"
+	"github.com/futuremeng/OpenArchitect/internal/version"
 )
 
 // 深度区间是本切片自定的（计划给的 1…8；spec 没规定上下限）。边界只在下面
@@ -29,6 +30,7 @@ func (a *App) settingsPage(c *ui.Context) {
 		a.scanRootField(c)
 		a.depthField(c)
 		a.saveRow(c)
+		a.updateSection(c)
 	})
 }
 
@@ -109,6 +111,55 @@ func (a *App) saveRow(c *ui.Context) {
 		case a.settingsSaved:
 			components.Icon(c, lucide.Check).Size(14, 14)
 			components.Text(c, "已保存").FontSize(t.Rem(.85)).TextColor(t.TextMuted)
+		}
+	})
+}
+
+// updateSection 是发布闭环的 GUI 半边（1.1）：显示版本、手动触发检查，
+// 有新版就给安装按钮。检查/安装都在后台跑（App.BeginUpdate*），这里只
+// 渲染主线程状态。装完不自动重启——窗口里的世界还是旧二进制，诚实起见
+// 明说"重启后生效"。
+func (a *App) updateSection(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).FillWidth().Gap(t.Space(1.5)).Children(func() {
+		components.Text(c, "版本与更新").FontSize(t.Rem(.75)).TextColor(t.TextMuted)
+		ui.Row(c).FillWidth().Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
+			components.Icon(c, lucide.Rocket).Size(14, 14)
+			components.Text(c, "OpenArchitect "+version.Version).
+				FontWeight(600).FontSize(t.Rem(.95)).TextColor(t.Text)
+			check := components.Button(c, "检查更新", components.ButtonSecondary)
+			check.Disabled(a.updateState != "")
+			if check.Clicked() {
+				a.BeginUpdateCheck()
+			}
+		})
+		switch {
+		case a.updateState == "checking":
+			components.Text(c, "正在查询 GitHub Releases…").
+				FontSize(t.Rem(.8)).TextColor(t.TextMuted)
+		case a.updateState == "installing":
+			components.Text(c, "正在下载并校验新版本…").
+				FontSize(t.Rem(.8)).TextColor(t.TextMuted)
+		case a.updateErr != nil:
+			components.Icon(c, lucide.CircleAlert).Size(14, 14)
+			components.Text(c, a.updateErr.Error()).
+				FontSize(t.Rem(.85)).TextColor(t.Danger)
+		case a.updateInstalled:
+			components.Icon(c, lucide.Check).Size(14, 14)
+			components.Text(c, "已安装 "+a.updateLatest+"，重启后生效").
+				FontSize(t.Rem(.85)).TextColor(t.TextMuted)
+		case a.updateLatest != "":
+			ui.Row(c).FillWidth().Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
+				components.Text(c, "发现新版本 "+a.updateLatest).
+					FontSize(t.Rem(.85)).TextColor(t.Text)
+				install := components.Button(c, "安装更新", components.ButtonPrimary)
+				if install.Clicked() {
+					a.BeginUpdateInstall()
+				}
+			})
+		case a.updateChecked:
+			components.Icon(c, lucide.Check).Size(14, 14)
+			components.Text(c, "已是最新版本").FontSize(t.Rem(.85)).TextColor(t.TextMuted)
 		}
 	})
 }

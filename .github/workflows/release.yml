@@ -1,0 +1,63 @@
+name: release
+
+# 发布闭环的机器半边：推 v* 标签 → 双架构构建 → GitHub Release（带
+# checksums）→ 应用内 `oac update` / 设置页按钮消费它。runner 与 ci.yaml
+# 同为 macOS（sqlite 随包预编译库只在 darwin 验过）；amd64 靠交叉编译。
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.2"
+
+      # 版本三处合一的守卫：git tag、internal/version.Version、Release 名
+      # 必须同值。对不上就断在这里，闭环里不会出现"装完还提示有新版"。
+      - name: 标签与版本常量必须一致
+        run: |
+          V=$(sed -n 's/.*const Version = "\([^"]*\)".*/\1/p' internal/version/version.go)
+          if [ "v$V" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME != v$V (internal/version)"; exit 1
+          fi
+
+      - name: 构建两张脸（darwin arm64 + amd64）
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for arch in arm64 amd64; do
+            rm -rf "build/$arch"; mkdir -p "build/$arch"
+            GOOS=darwin GOARCH=$arch go build -trimpath -ldflags "-s -w" \
+              -o "build/$arch/oac" ./cmd/oac
+            GOOS=darwin GOARCH=$arch go build -trimpath -ldflags "-s -w" \
+              -o "build/$arch/openarchitect" ./cmd/openarchitect
+            tar -C "build/$arch" -czf \
+              "dist/openarchitect-${GITHUB_REF_NAME}-darwin-$arch.tar.gz" \
+              oac openarchitect
+          done
+          (cd dist && shasum -a 256 *.tar.gz > checksums.txt && cat checksums.txt)
+
+      # 发布说明直接取 CHANGELOG 对应小节：文档即发布文案，不再手写第二份。
+      - name: 发布说明取自 CHANGELOG
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          awk -v v="$V" '/^## /{if(seen)exit; seen=($0 ~ "^## "v); next} seen' \
+            CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "CHANGELOG has no section for $V"; exit 1
+          fi
+
+      - name: 发布
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt \
+            --title "OpenArchitect $GITHUB_REF_NAME" --notes-file notes.md

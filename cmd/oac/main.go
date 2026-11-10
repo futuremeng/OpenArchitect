@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/futuremeng/OpenArchitect/internal/core/store"
+	"github.com/futuremeng/OpenArchitect/internal/version"
 )
 
 func main() {
@@ -32,8 +33,9 @@ type subcommand struct {
 }
 
 // Version is the release identity of both faces (1.0 plan T10). The GUI and
-// the CLI print this one constant.
-const Version = "1.0.0"
+// the CLI print the one constant in internal/version, which the release
+// workflow pins against the git tag.
+const Version = version.Version
 
 var subcommands = map[string]subcommand{
 	"scan": {arg: "path", run: func(ctx context.Context, db *store.DB, id string, _ int, out io.Writer) error {
@@ -57,6 +59,9 @@ func run(ctx context.Context, args []string) error {
 	if args[0] == "version" { // must not touch the database (F4 rule)
 		fmt.Println("oac", Version)
 		return nil
+	}
+	if args[0] == "update" { // likewise: network verb, no database (F4)
+		return runUpdate(ctx, args[1:], os.Stdout)
 	}
 	sub, ok := subcommands[args[0]]
 	if !ok {
@@ -103,6 +108,7 @@ func printUsage() {
   oac sync   <root>                   [--db PATH]
   oac graph  <repo-id>                [--db PATH]
   oac impact <element-id> [--depth N] [--db PATH]
+  oac update [--check]              check GitHub / install new build
   oac version
 `)
 }
