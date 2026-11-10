@@ -15,7 +15,7 @@
 三条不变量（CI 机械检查 + 代码评审双重守住）：
 
 - **I1 单向依赖**：`internal/agent/**` 可以 import `internal/core/**`；`internal/core/**` 与 `internal/scanner/**` **永不** import `internal/agent/**`。观测主干对 agent 一无所知。
-- **I2 一切执行皆用户发起、皆记账**：没有定时器、没有自动触发。每次 rollout 写 ledger（§9），跑完触发一次普通扫描（§8），agent 的产出与人类提交在快照层一视同仁。
+- **I2′ 自动的只有观测，一切执行皆用户发起、皆记账**（2026-11-10 修订，见生长模型 spec §2.1）：定时器与自动触发仅允许调用两个纯观测动作——`git fetch` 与 `scanner.Run`，皆记账进 forest 的 sync ledger；agent rollout、模型调用、任何写外部系统的动作仍必须用户显式发起。每次 rollout 写 ledger（§9），跑完触发一次普通扫描（§8），agent 的产出与人类提交在快照层一视同仁。
 - **I3 模型访问只有两条通道**：**分析 agent**（§1.5，进程内）连用户配置的 OpenAI-compatible 端点（BaseURL 可指本地网关 / Ollama，local-first 不破）；**变更 rollout** 只经本地 CLI 子进程（`claude -p` / `codex exec` / `opencode run`，与 harness2 的 `CHANNELS` 做法一致）。两条都不捆绑厂商 SDK、不破 no-cgo 交叉编译。
 
 ## 1.5 角色划分（2026-10-23 修订）：分析 agent 为主
