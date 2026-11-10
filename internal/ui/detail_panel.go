@@ -38,6 +38,7 @@ func (a *App) detailPanel(c *ui.Context) {
 			ui.Scroll(c).Grow(1).MinHeight(0).Children(func() {
 				ui.Column(c).FillWidth().Gap(t.Space(2)).Children(func() {
 					a.detailFacts(c, el)
+					a.detailFruits(c, el)
 					a.detailMethods(c, el)
 					a.neighbourGroup(c, "直接上游", a.view.Upstream(el.ID, 1), lucide.ArrowUpRight)
 					a.neighbourGroup(c, "直接下游", a.view.Downstream(el.ID, 1), lucide.ArrowDownLeft)
@@ -45,6 +46,43 @@ func (a *App) detailPanel(c *ui.Context) {
 				})
 			})
 		})
+}
+
+// detailFruits 是选中节点的果实行：哪个 agent、哪个 commit、什么时候。
+// 数据是 Reload 预聚合的 a.fruits，抽屉里不查库不碰 git。
+func (a *App) detailFruits(c *ui.Context, el model.Element) {
+	commits := a.fruits[el.ID]
+	if len(commits) == 0 {
+		return
+	}
+	t := c.Theme()
+	ui.Column(c).FillWidth().Gap(t.Space(0.5)).Children(func() {
+		components.Text(c, fmt.Sprintf("果实（%d）", len(commits))).
+			FontSize(t.Rem(.75)).TextColor(t.TextMuted)
+		for _, cm := range commits {
+			ui.Row(c).Gap(t.Space(1)).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(7, 7).Radius(4).Background(fruitColor(cm.AgentTag, t))
+				components.Text(c, cm.Message).FontSize(t.Rem(.85)).SingleLine().TextColor(t.Text)
+				components.Text(c, shortHash(cm.Hash)+" · "+shortDate(cm.Date)).
+					FontSize(t.Rem(.75)).TextColor(t.TextMuted)
+			})
+		}
+	})
+}
+
+func shortHash(hash string) string {
+	if len(hash) > 8 {
+		return hash[:8]
+	}
+	return hash
+}
+
+// shortDate 取 ISO 时间戳的日期段；空串与短串都原样返回，不越界。
+func shortDate(iso string) string {
+	if len(iso) >= 10 {
+		return iso[:10]
+	}
+	return iso
 }
 
 func (a *App) detailHeader(c *ui.Context, el model.Element) {

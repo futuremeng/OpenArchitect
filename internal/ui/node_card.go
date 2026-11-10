@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/egoist/mygo/ui"
 	"github.com/oneo-me/onevra/source/components"
 	"github.com/oneo-me/onevra/source/components/flow"
@@ -52,15 +54,87 @@ func iconFor(t model.ElementType) *ui.SVG {
 // is empty (a System has no package path): uniform structure is what makes
 // flow's measurement and layout predictable. The box is 168×46 at every LOD
 // — the layout never moves because the camera moved.
-func nodeCard(c *ui.Context, el model.Element, zoom float32) {
+// fruitBadge 是 nodeCard 看到的果实视图：commit 列表（新在前）、条长标尺，
+// 以及这一张卡要不要展开成条（分级渲染：只有选中/焦点卡展开，其余单点——
+// 600 卡全展开要多画 ~1200 个 Box，超帧时闸门）。
+type fruitBadge struct {
+	commits  []model.Commit
+	maxFiles int
+	expand   bool
+}
+
+func (b fruitBadge) tag() string {
+	if len(b.commits) == 0 {
+		return ""
+	}
+	return b.commits[0].AgentTag
+}
+
+// agentPalette 是智能体身份色：中间调，深/浅主题都可读；不含橙（mixed 专用）
+// 与红（Danger 归保留色，agent 走身份色后红色让给 stale 等状态语义）。
+var agentPalette = []string{
+	"#3b82f6", // blue
+	"#8b5cf6", // violet
+	"#14b8a6", // teal
+	"#ec4899", // pink
+	"#06b6d4", // cyan
+	"#84cc16", // lime
+}
+
+// agentColor 把 agent 名哈希成稳定身份色——同一个 agent 在任何一帧、任何
+// 一台机器上都是同一个颜色，图例才认得出。
+func agentColor(name string) ui.Color {
+	sum := 0
+	for _, r := range name {
+		sum += int(r)
+	}
+	return ui.Hex(agentPalette[sum%len(agentPalette)])
+}
+
+// fruitColor 把归因映射成颜色语义（research 2026-11-10 §5 修订）：
+// agent:<name>→身份色，mixed→橙；human 或无果实走中性色。
+func fruitColor(fruit string, t *ui.Theme) ui.Color {
+	switch name, ok := strings.CutPrefix(fruit, "agent:"); {
+	case ok:
+		return agentColor(name)
+	case fruit == "mixed":
+		return t.Warning
+	default:
+		return t.TextMuted
+	}
+}
+
+// fruitBars 是展开卡的果实清单：≤3 条横条，颜色=归属，长度≈变更规模
+// （len(Files) 对全图最大值归一，参考图第 1 条语言）。
+func fruitBars(c *ui.Context, badge fruitBadge, t *ui.Theme) {
+	ui.Column(c).Gap(2).Children(func() {
+		for i, cm := range badge.commits {
+			if i == 3 {
+				break
+			}
+			w := float32(16)
+			if badge.maxFiles > 0 {
+				ratio := float32(len(cm.Files)) / float32(badge.maxFiles)
+				if ratio > 1 {
+					ratio = 1
+				}
+				w += 44 * ratio
+			}
+			ui.Box(c).Size(w, 4).Radius(2).Background(fruitColor(cm.AgentTag, t))
+		}
+	})
+}
+
+func nodeCard(c *ui.Context, el model.Element, zoom float32, badge fruitBadge) {
 	t := c.Theme()
 	box := ui.Row(c).Size(cardWidth, cardHeight).Radius(flow.CardRadius).
 		Background(t.Surface).Border(1, t.Border)
 	if zoom < lodDot {
-		// 点阵档：低倍全景下读不出任何字，画一颗居中的中性圆点，
-		// 让密度和分布成为唯一可读的信息（帧时间也最省）。
+		// 点阵档：低倍全景下读不出任何字，画一颗居中的圆点——果实色是
+		// 这一档唯一能传达的信息（参考图设计语言第 4 条）。
+		dot := fruitColor(badge.tag(), t)
 		box.AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-			ui.Box(c).Size(10, 10).Radius(5).Background(t.TextMuted)
+			ui.Box(c).Size(10, 10).Radius(5).Background(dot)
 		})
 		return
 	}
@@ -69,10 +143,14 @@ func nodeCard(c *ui.Context, el model.Element, zoom float32) {
 		ui.Icon(c, iconFor(el.Type)).Size(14, 14)
 		text := ui.Column(c).Grow(1).MinWidth(0).Gap(1)
 		if zoom < lodFull {
-			// 图标档：名字是唯一还能读的东西，包路径这一帧不值得画。
+			// 图标档：名字是唯一还能读的东西，包路径这一帧不值得画；
+			// 条也读不出长短，展开与否都只画优先点。
 			text.Children(func() {
 				components.Text(c, el.Name).SingleLine().FontWeight(600).TextColor(t.Text)
 			})
+			if badge.tag() != "" {
+				fruitDot(c, badge.tag(), 8)
+			}
 			return
 		}
 		text.Children(func() {
@@ -80,7 +158,20 @@ func nodeCard(c *ui.Context, el model.Element, zoom float32) {
 			components.Text(c, truncateMiddle(model.PkgPathOf(el.ID), pkgBudget)).
 				SingleLine().FontSize(t.Rem(0.8)).TextColor(t.TextMuted)
 		})
+		switch {
+		case badge.expand && len(badge.commits) > 0:
+			fruitBars(c, badge, t)
+		case badge.tag() != "":
+			fruitDot(c, badge.tag(), 8)
+		}
 	})
+}
+
+// fruitDot 是卡片右侧的归因圆点。mygo 没有 Stack，角标落在行尾垂直居中——
+// 参考图的语义（色点挂卡上）保住，代价是没有真角位的四角选择。
+func fruitDot(c *ui.Context, fruit string, size float32) {
+	t := c.Theme()
+	ui.Box(c).Size(size, size).Radius(size / 2).Background(fruitColor(fruit, t))
 }
 
 // truncateMiddle keeps both ends of a package path: the head says which module

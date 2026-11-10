@@ -48,3 +48,12 @@ jobs:
           go list -f '{{join .Imports "\n"}}' ./cmd/oac \
             | grep -x -E 'github.com/egoist/mygo|github.com/egoist/mygo/ui|github.com/oneo-me/onevra[^ ]*' \
             && exit 1 || true
+      # R3（1.0 T10，spec 切片 7 不变式 I2′）：forest 的自动动作只有
+      # git fetch 与 scanner.Run，所以它不碰 agent 子系统、不起 HTTP 客户端、
+      # 不引 go-git，也不依赖 UI 栈。将来 Gitea/GitHub source 适配器落地时，
+      # 网络例外只开给 internal/forest/source/** 这条路径，不放行整个 forest。
+      - name: R3 forest 只走 git CLI，不碰 agent 与网络
+        run: |
+          go list -f '{{join .Imports "\n"}}' ./internal/forest/... \
+            | grep -x -E 'net/http|net/url|github.com/go-git[^ ]*|github.com/futuremeng/OpenArchitect/internal/(agent|ui)[^ ]*' \
+            && exit 1 || true

@@ -66,7 +66,7 @@ func TestNodeCardIsTwoTextLines(t *testing.T) {
 		Type: model.TypeComponent,
 		Name: "Basket",
 	}
-	tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, 1) }, 220, 60)
+	tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, 1, fruitBadge{}) }, 220, 60)
 	if !tt.HasText("Basket") {
 		t.Fatalf("card must show the type name, texts = %v", tt.Texts())
 	}
@@ -95,12 +95,12 @@ func TestNodeCardLODStairs(t *testing.T) {
 		{lodFull, 2},
 		{1.5, 2},
 	} {
-		tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, tc.zoom) }, 220, 60)
+		tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, tc.zoom, fruitBadge{}) }, 220, 60)
 		if got := len(tt.Texts()); got != tc.want {
 			t.Errorf("zoom %g: text lines = %d, want %d: %v", tc.zoom, got, tc.want, tt.Texts())
 		}
 	}
-	if tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, lodDot) }, 220, 60); !tt.HasText("Basket") {
+	if tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, lodDot, fruitBadge{}) }, 220, 60); !tt.HasText("Basket") {
 		t.Fatalf("the icon level must still name the node, texts = %v", tt.Texts())
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/oneo-me/onevra/source/components/command"
 	"github.com/oneo-me/onevra/source/components/flow"
@@ -95,6 +96,18 @@ type App struct {
 	// down to ~23×6 px. The toggle opts components in; it is never an
 	// auto-collapse on node count.
 	showComponents bool
+
+	// 果实索引（1.0 T9 / 1.1 批次）：element ID → 触及它所在文件的 agent/mixed
+	// 归因 commit 列表；fruitByAgent/fruitMixed 是图例的逐 agent 计数。
+	// fruitLog 是不带过滤的原始日志（带解析好的时间戳），时间滑杆每次拖动
+	// 在它上面重聚合出 a.fruits——scrub 不查库，帧内只读 map。
+	fruits                          map[string][]model.Commit
+	fruitLog                        []fruitEntry
+	fruitDir                        map[string][]string
+	fruitByAgent                    map[string]int
+	fruitMixed                      int
+	fruitMaxFiles                   int
+	fruitMin, fruitMax, fruitCursor time.Time
 
 	// flowState is the flow camera/viewport state. spec §9.2 mandates App hold
 	// it and Task 19 passes &a.flowState to flow.View, so it is deliberately a

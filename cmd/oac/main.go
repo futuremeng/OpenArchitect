@@ -31,9 +31,16 @@ type subcommand struct {
 	run func(ctx context.Context, db *store.DB, id string, depth int, out io.Writer) error
 }
 
+// Version is the release identity of both faces (1.0 plan T10). The GUI and
+// the CLI print this one constant.
+const Version = "1.0.0"
+
 var subcommands = map[string]subcommand{
 	"scan": {arg: "path", run: func(ctx context.Context, db *store.DB, id string, _ int, out io.Writer) error {
 		return runScan(ctx, db, id, out)
+	}},
+	"sync": {arg: "root", run: func(ctx context.Context, db *store.DB, id string, _ int, out io.Writer) error {
+		return runSync(ctx, db, id, out)
 	}},
 	"graph": {arg: "repo id", run: func(ctx context.Context, db *store.DB, id string, _ int, out io.Writer) error {
 		return runGraph(ctx, db, id, out)
@@ -46,6 +53,10 @@ var subcommands = map[string]subcommand{
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return usage("no subcommand")
+	}
+	if args[0] == "version" { // must not touch the database (F4 rule)
+		fmt.Println("oac", Version)
+		return nil
 	}
 	sub, ok := subcommands[args[0]]
 	if !ok {
@@ -89,8 +100,10 @@ func run(ctx context.Context, args []string) error {
 func printUsage() {
 	fmt.Fprint(os.Stderr, `usage:
   oac scan   <path>                   [--db PATH]
+  oac sync   <root>                   [--db PATH]
   oac graph  <repo-id>                [--db PATH]
   oac impact <element-id> [--depth N] [--db PATH]
+  oac version
 `)
 }
 

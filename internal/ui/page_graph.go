@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/oneo-me/onevra/source/components"
@@ -26,6 +27,36 @@ func (a *App) graphPage(c *ui.Context) {
 				a.detailPanel(c)
 			}
 		})
+		a.timeScrubber(c)
+	})
+}
+
+// timeScrubber 是底部时间轴（第二参考图第 5 条语言）：拖动=只看"游标之前"
+// 结出的果实，生长回放的最小形态。没有果实整条不画；满格=全部（游标归零）。
+// 拖动的代价是 reaggregateFruits 一次线性扫 fruitLog——不查库、不重扫。
+func (a *App) timeScrubber(c *ui.Context) {
+	if len(a.fruitLog) == 0 || a.fruitMax.IsZero() {
+		return
+	}
+	t := c.Theme()
+	frac := 1.0
+	if !a.fruitCursor.IsZero() {
+		span := a.fruitMax.Sub(a.fruitMin)
+		if span > 0 {
+			frac = float64(a.fruitCursor.Sub(a.fruitMin)) / float64(span)
+		}
+	}
+	label := "全部"
+	if !a.fruitCursor.IsZero() {
+		label = a.fruitCursor.Format("2006-01-02")
+	}
+	ui.Row(c).FillWidth().Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
+		components.Text(c, "时间轴").FontSize(t.Rem(.8)).TextColor(t.TextMuted)
+		v := frac
+		if ui.Slider(c, &v, 0, 1).Label("果实时间游标").Changed() {
+			a.setCursorFrac(v)
+		}
+		components.Text(c, label).FontSize(t.Rem(.8)).TextColor(t.TextMuted)
 	})
 }
 
@@ -94,6 +125,10 @@ func (a *App) mapHeader(c *ui.Context) {
 			a.SetNeighborFocus(a.neighborFocus)
 		}
 		components.Text(c, "邻域聚焦").FontSize(t.Rem(.85)).TextColor(t.TextMuted)
+		// 果实图例（参考图设计语言第 6 条 + 第二图逐 agent 修订）：没有果实不画。
+		if len(a.fruitLog) > 0 {
+			a.fruitLegend(c)
+		}
 		// 深度角标：滚轮/双击改的是层级不是尺寸，这里得有一处把当前层
 		// 说出来，否则"缩放没放大"会被当成坏了。
 		components.Text(c, a.LevelName()).FontSize(t.Rem(.85)).TextColor(t.TextMuted)
@@ -144,6 +179,30 @@ func pick(cond bool, ifTrue, ifFalse ui.Color) ui.Color {
 		return ifTrue
 	}
 	return ifFalse
+}
+
+// fruitLegend 是顶栏的逐 agent 图例（第二参考图第 2 条语言）：每个 agent
+// 一颗身份色点 + 名字 + 计数，mixed 橙点收尾。计数来自 reaggregateFruits，
+// 时间滑杆拖动后这里跟着变——图例就是游标左侧世界的 census。
+func (a *App) fruitLegend(c *ui.Context) {
+	t := c.Theme()
+	names := make([]string, 0, len(a.fruitByAgent))
+	for name := range a.fruitByAgent {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	ui.Row(c).Gap(t.Space(1)).AlignItems(ui.Center).Children(func() {
+		for _, name := range names {
+			ui.Box(c).Size(7, 7).Radius(4).Background(agentColor(name))
+			components.Text(c, name+" "+fmt.Sprint(a.fruitByAgent[name])).
+				FontSize(t.Rem(.8)).TextColor(t.TextMuted)
+		}
+		if a.fruitMixed > 0 {
+			ui.Box(c).Size(7, 7).Radius(4).Background(t.Warning)
+			components.Text(c, fmt.Sprintf("协作 %d", a.fruitMixed)).
+				FontSize(t.Rem(.8)).TextColor(t.TextMuted)
+		}
+	})
 }
 
 // graphShortcuts 是图页交互的键盘形态：Esc 清选中、F 适应窗口、

@@ -87,6 +87,18 @@ func (d *DB) Snapshot(ctx context.Context, snapshotID string) (model.Architectur
 	}, nil
 }
 
+// SetSnapshotCommit backfills the commit columns a scan left empty: forest
+// reads git HEAD before and after scanner.Run and writes the pair here
+// (1.0 plan, design decision 2 — the scanner itself never touches git).
+func (d *DB) SetSnapshotCommit(ctx context.Context, snapshotID, commitHash, branch string) error {
+	if _, err := d.Execute(ctx,
+		`UPDATE architecture_snapshots SET commit_hash = ?, branch = ? WHERE id = ?`,
+		commitHash, branch, snapshotID); err != nil {
+		return fmt.Errorf("store: set snapshot commit %s: %w", snapshotID, err)
+	}
+	return nil
+}
+
 // SnapshotForElement is what the CLI uses: an element id alone, latest snapshot
 // that still carries it.
 func (d *DB) SnapshotForElement(ctx context.Context, elementID string) (string, error) {

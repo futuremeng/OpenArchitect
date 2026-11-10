@@ -3,7 +3,7 @@ package store
 // schemaVersion is the value written to PRAGMA user_version by Migrate.
 // Every future schema change appends a new []string to migrations and bumps
 // this constant; migrations[i] brings a database from version i to i+1.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // migrations[0] is v1: the five spec §7.1 tables plus their indexes. DDL text
 // is verbatim from the spec with two settled amendments — plan finalized
@@ -60,4 +60,29 @@ var migrations = [][]string{{
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL
 	)`,
+}, {
+	// migrations[1] is v2, the growth model's storage (1.0 plan, design
+	// decision 1): side tables only, never ALTER — every statement must stay
+	// replay-safe (migrate.go). repo_sync holds the forest bookkeeping;
+	// commits holds the attribution ledger. repos itself is untouched, so
+	// UpsertRepo cannot clobber sync state.
+	`CREATE TABLE IF NOT EXISTS repo_sync (
+		repo_id TEXT PRIMARY KEY REFERENCES repos(id) ON DELETE CASCADE,
+		remote_url TEXT NOT NULL DEFAULT '',
+		sync_state TEXT NOT NULL DEFAULT 'new',
+		last_head TEXT NOT NULL DEFAULT '',
+		updated_at TEXT DEFAULT (datetime('now'))
+	)`,
+	`CREATE TABLE IF NOT EXISTS commits (
+		repo_id TEXT NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+		hash TEXT NOT NULL,
+		author TEXT NOT NULL DEFAULT '',
+		author_email TEXT NOT NULL DEFAULT '',
+		date TEXT NOT NULL DEFAULT '',
+		message TEXT NOT NULL DEFAULT '',
+		agent_tag TEXT NOT NULL DEFAULT 'human',
+		files_json TEXT NOT NULL DEFAULT '[]',
+		PRIMARY KEY (repo_id, hash)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_commits_agent ON commits(agent_tag)`,
 }}

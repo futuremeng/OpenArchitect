@@ -17,6 +17,13 @@ func (a *App) reposPage(c *ui.Context) {
 		Gap(t.Space(2)).Children(func() {
 		ui.Row(c).FillWidth().Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 			components.Text(c, "仓库").FontWeight(600).FontSize(t.Rem(1.15)).TextColor(t.Text)
+			// 「同步全部」= 一次 forest 轮（发现+检入+记账+按需重扫）。
+			// 用户发起，I2′ 合规；同步中禁用，与扫描共用同一个后台槽。
+			sync := ui.Button(c, "同步全部")
+			sync.Disabled(a.status == StatusScanning || len(a.repos) == 0)
+			if sync.Clicked() {
+				_ = a.BeginSync()
+			}
 			ui.Spacer(c)
 			components.Text(c, a.StatusLine()).FontSize(t.Rem(.85)).TextColor(t.TextMuted)
 		})
@@ -49,6 +56,16 @@ func (a *App) repoRow(c *ui.Context, repo model.Repo) {
 				TextColor(t.TextMuted).SingleLine()
 		})
 		components.Text(c, repo.Lang).FontSize(t.Rem(.85)).TextColor(t.TextMuted).SingleLine()
+		// 同步徽标：new 灰 / tracked 绿 / stale 红。remote_url 有就跟着显示——
+		// 森林里的树有没有根，是这一页最该说的一句话。
+		ui.Row(c).Gap(t.Space(1)).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(7, 7).Radius(4).Background(syncColor(repo.SyncState, t))
+			label := repo.SyncState
+			if repo.RemoteURL != "" {
+				label = repo.SyncState + " · remote"
+			}
+			components.Text(c, label).FontSize(t.Rem(.8)).TextColor(t.TextMuted).SingleLine()
+		})
 		// 「查看」把图页过滤器收成这一个仓再跳过去——仓库页列出的仓必须
 		// 在任何一屏里都点得到，否则列表只是清单。
 		if a.repoLatest[string(repo.ID)] != "" {
@@ -67,6 +84,18 @@ func (a *App) repoRow(c *ui.Context, repo model.Repo) {
 			_ = a.BeginScan(repo.LocalPath)
 		}
 	})
+}
+
+// syncColor 把 forest 的三态映射成颜色：new 灰 / tracked 绿 / stale 红。
+func syncColor(state string, t *ui.Theme) ui.Color {
+	switch state {
+	case "tracked":
+		return t.Success
+	case "stale":
+		return t.Danger
+	default:
+		return t.TextMuted
+	}
 }
 
 func emptyRepos(c *ui.Context) {
