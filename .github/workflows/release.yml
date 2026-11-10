@@ -58,6 +58,8 @@ jobs:
           fi
 
       - name: 发布
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt \
             --title "OpenArchitect $GITHUB_REF_NAME" --notes-file notes.md
