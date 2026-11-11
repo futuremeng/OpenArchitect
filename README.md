@@ -23,7 +23,7 @@ oac update --check             # 查询新版本（不带 --check 直接安装�
 ## 安装与保持更新
 
 从 [GitHub Releases](../../releases) 下载对应芯片的 tar.gz（arm64 / amd64），
-解压出 `oac` 与 `openarchitect` 放进 PATH 即可。之后的更新闭环：
+解压出 `oac` 放进 PATH、`OpenArchitect.app` 拖进「应用程序」即可。之后的更新闭环：
 
 - 发版：推 `v*` 标签 → CI 自动构建双架构、发 Release（附 sha256 checksums，
   说明取自 CHANGELOG；标签与版本常量不一致会直接失败）。

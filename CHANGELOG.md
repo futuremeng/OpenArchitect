@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- 发布包形态升级：tar.gz 内含 `oac`（裸二进制）+ `OpenArchitect.app`
+  （bundle，Info.plist 版本取自标签，图标由 resources/icon.png 生成，
+  ad-hoc 签名）；自更新按 bundle 内小写 `openarchitect` 认身，闭环不变
+
 ## 1.1.0 — 2026-11-10
 
 发布闭环：tag → CI Release → 应用内自更新。

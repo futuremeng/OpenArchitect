@@ -140,6 +140,32 @@ func TestApplySwapsExecutable(t *testing.T) {
 	}
 }
 
+// The release archive ships the GUI inside OpenArchitect.app; the app must
+// still self-update from Contents/MacOS/openarchitect — name check, extract
+// by base name under the bundle path, swap in place.
+func TestApplySwapsExecutableInsideBundle(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "OpenArchitect.app", "Contents", "MacOS", "openarchitect")
+	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, []byte("OLD"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := tarGz(t, map[string]string{
+		"oac": "CLI-NEW",
+		"OpenArchitect.app/Contents/MacOS/openarchitect": "GUI-NEW",
+	})
+	if err := (Checker{}).Apply(context.Background(), testRelease(archive), ApplyOptions{
+		ExePath: exe, Fetch: memFetch(archive, goodSums(archive))}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(exe)
+	if string(got) != "GUI-NEW" {
+		t.Fatalf("exe content %q want GUI-NEW", got)
+	}
+}
+
 func TestApplyChecksumMismatchKeepsBinary(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "openarchitect")
