@@ -5,4 +5,4 @@
 package version
 
 // Version is the release identity of both faces (1.0 plan T10).
-const Version = "1.1.0"
+const Version = "1.2.0"
