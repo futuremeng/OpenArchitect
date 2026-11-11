@@ -3,7 +3,7 @@ package store
 // schemaVersion is the value written to PRAGMA user_version by Migrate.
 // Every future schema change appends a new []string to migrations and bumps
 // this constant; migrations[i] brings a database from version i to i+1.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // migrations[0] is v1: the five spec §7.1 tables plus their indexes. DDL text
 // is verbatim from the spec with two settled amendments — plan finalized
@@ -85,4 +85,24 @@ var migrations = [][]string{{
 		PRIMARY KEY (repo_id, hash)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_commits_agent ON commits(agent_tag)`,
+}, {
+	// migrations[2] is v3, the growth diff engine (growth spec 切片 B).
+	// snapshot_from/to carry no FK on purpose: they are history pointers, and
+	// deleting a snapshot (slice 2's snapshot list) must not erase the
+	// growth story that ended at it. repo_id does carry the FK so removing
+	// a repo takes its events along.
+	`CREATE TABLE IF NOT EXISTS growth_events (
+		repo_id TEXT NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+		snapshot_from TEXT NOT NULL,
+		snapshot_to TEXT NOT NULL,
+		element_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		commit_hash TEXT NOT NULL DEFAULT '',
+		created_at TEXT DEFAULT (datetime('now')),
+		PRIMARY KEY (snapshot_to, element_id, kind)
+	)`,
+	// rowid cannot appear in an index expression, so ordering stays a scan
+	// over the repo_id index — plenty for a per-repo story.
+	`CREATE INDEX IF NOT EXISTS idx_growth_repo ON growth_events(repo_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_growth_element ON growth_events(element_id)`,
 }}

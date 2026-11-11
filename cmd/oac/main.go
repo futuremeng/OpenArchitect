@@ -50,6 +50,9 @@ var subcommands = map[string]subcommand{
 	"impact": {arg: "element id", run: func(ctx context.Context, db *store.DB, id string, depth int, out io.Writer) error {
 		return runImpact(ctx, db, id, depth, out)
 	}},
+	"growth": {arg: "repo id", run: func(ctx context.Context, db *store.DB, id string, _ int, out io.Writer) error {
+		return runGrowth(ctx, db, id, out)
+	}},
 }
 
 func run(ctx context.Context, args []string) error {
@@ -108,6 +111,7 @@ func printUsage() {
   oac sync   <root>                   [--db PATH]
   oac graph  <repo-id>                [--db PATH]
   oac impact <element-id> [--depth N] [--db PATH]
+  oac growth <repo-id>                  [--db PATH]
   oac update [--check]              check GitHub / install new build
   oac version
 `)

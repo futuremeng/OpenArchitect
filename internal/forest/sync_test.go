@@ -86,6 +86,10 @@ func TestSyncScanGateAndCursor(t *testing.T) {
 	if err != nil || snap.CommitHash != head1 || snap.Branch != "main" {
 		t.Fatalf("snapshot commit binding = %+v (want %s/main)", snap, head1[:8])
 	}
+	// The first scan is a baseline, not a growth event (growth slice B).
+	if events, err := db.GrowthEvents(ctx, repoID, "", 10); err != nil || len(events) != 0 {
+		t.Fatalf("first scan wrote growth events: %+v, %v", events, err)
+	}
 
 	// Round 2: README-only commit — bookkeeping without rescan (DoD 3).
 	write(t, repo, "README.md", "grown\n")
@@ -127,6 +131,34 @@ func TestSyncScanGateAndCursor(t *testing.T) {
 	}
 	if rep.Repos[0].Action != "clean" || rep.Repos[0].Scanned {
 		t.Fatalf("round 4 = %+v, want clean", rep.Repos[0])
+	}
+
+	// Round 5: a new type — the growth story gains an added component,
+	// attributed to the commit that introduced it (growth spec 切片 B).
+	write(t, repo, "b.go", "package proj\n\ntype B struct{}\n")
+	commit(t, repo, "feat: type B")
+	rep, err = Sync(ctx, db, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Repos[0].Scanned {
+		t.Fatalf("round 5 = %+v, want scanned", rep.Repos[0])
+	}
+	events, err := db.GrowthEvents(ctx, repoID, "", 10)
+	if err != nil || len(events) == 0 {
+		t.Fatalf("growth events = %+v, %v", events, err)
+	}
+	found := false
+	for _, e := range events {
+		if e.ElementID == "cmp:example.com/proj.B" && e.Kind == model.GrowthAdded {
+			found = true
+			if e.CommitHash != rep.Repos[0].To {
+				t.Fatalf("event attribution = %q, want %q", e.CommitHash, rep.Repos[0].To)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no added event for cmp:example.com/proj.B: %+v", events)
 	}
 
 	// Repos() carries the sync state through the join.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 生长切片 B：跨快照 element 级 diff 引擎——`growth_events` 表（schema v3）、
+  `growth.Diff` 纯函数（added/removed/signature-changed/edge-changed）、
+  sync 重扫后自动记账并按文件重合归因 commit、`oac growth <repo-id>` 查询面；
+  首扫是基线不是事件，edge 事件故意不归因（重合即猜测）
 - 发布包形态升级：tar.gz 内含 `oac`（裸二进制）+ `OpenArchitect.app`
   （bundle，Info.plist 版本取自标签，图标由 resources/icon.png 生成，
   ad-hoc 签名）；自更新按 bundle 内小写 `openarchitect` 认身，闭环不变

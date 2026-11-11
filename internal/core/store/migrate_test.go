@@ -22,7 +22,7 @@ func TestMigrateCreatesSevenTables(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{"app_config", "arch_elements", "arch_relationships", "architecture_snapshots",
-		"commits", "repo_sync", "repos"}
+		"commits", "growth_events", "repo_sync", "repos"}
 	if len(got) != len(want) {
 		t.Fatalf("tables = %v, want %v", got, want)
 	}
@@ -150,7 +150,8 @@ func TestIndexesExist(t *testing.T) {
 		got[str(v[0])] = true
 	}
 	for _, want := range []string{"idx_snapshots_repo", "idx_elements_repo", "idx_elements_name",
-		"idx_elements_element", "idx_rel_from", "idx_rel_to", "idx_commits_agent"} {
+		"idx_elements_element", "idx_rel_from", "idx_rel_to", "idx_commits_agent",
+		"idx_growth_repo", "idx_growth_element"} {
 		if !got[want] {
 			t.Fatalf("missing index %s (have %v)", want, got)
 		}

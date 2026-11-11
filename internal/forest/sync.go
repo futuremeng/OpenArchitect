@@ -78,7 +78,7 @@ func syncOne(ctx context.Context, db *store.DB, line *RepoReport) {
 		line.Action, line.Note = "failed", err.Error()
 		return
 	}
-	line.Commits = recorded
+	line.Commits = len(recorded)
 
 	touched := lastHead == "" // no cursor: cannot prove no-change, scan
 	if !touched {
@@ -89,6 +89,7 @@ func syncOne(ctx context.Context, db *store.DB, line *RepoReport) {
 		// architecture. Bookkeeping and the cursor move on regardless.
 		line.Note = "no adapter for language"
 	} else if touched {
+		prevID, _ := db.LatestSnapshotID(ctx, line.Repo.ID)
 		report, err := scanner.Run(ctx, db, line.Repo.LocalPath)
 		if err != nil {
 			line.Action, line.Note = "failed", "scan: "+err.Error()
@@ -97,6 +98,18 @@ func syncOne(ctx context.Context, db *store.DB, line *RepoReport) {
 		if err := db.SetSnapshotCommit(ctx, report.SnapshotID, head, branch); err != nil {
 			line.Action, line.Note = "failed", err.Error()
 			return
+		}
+		// The growth story of this round (growth spec 切片 B): diff the
+		// snapshot the cursor pointed at against the fresh one. A failure
+		// fails the line before the cursor moves, so the next round redoes
+		// the whole step — the event upsert is idempotent. The first scan
+		// of a repo (no prev snapshot) records nothing: a baseline is not
+		// a growth event.
+		if prevID != "" && prevID != report.SnapshotID {
+			if err := recordGrowth(ctx, db, line.Repo.ID, prevID, report.SnapshotID, recorded); err != nil {
+				line.Action, line.Note = "failed", "growth: "+err.Error()
+				return
+			}
 		}
 		line.Scanned = true
 	}
@@ -109,11 +122,12 @@ func syncOne(ctx context.Context, db *store.DB, line *RepoReport) {
 }
 
 // recordCommits reads (lastHead..head] and stores each commit with its
-// attribution verdict.
-func recordCommits(ctx context.Context, db *store.DB, line *RepoReport, lastHead, head string) (int, error) {
+// attribution verdict. The records come back newest first for the growth
+// attribution below.
+func recordCommits(ctx context.Context, db *store.DB, line *RepoReport, lastHead, head string) ([]model.Commit, error) {
 	recs, err := gitcmd.Log(ctx, line.Repo.LocalPath, lastHead, head, maxLogPerRound)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	commits := make([]model.Commit, 0, len(recs))
 	for _, r := range recs {
@@ -123,9 +137,67 @@ func recordCommits(ctx context.Context, db *store.DB, line *RepoReport, lastHead
 			Files:    r.Files})
 	}
 	if err := db.SaveCommits(ctx, commits); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return len(commits), nil
+	return commits, nil
+}
+
+// recordGrowth diffs two snapshots and stores the element-level story with
+// commit attribution by file overlap: the newest commit in this round that
+// touched the element's file. Edge events stay unattributed on purpose — an
+// edge lives in two files, naming one would be a guess (growth spec §6 risk
+// 4: attribution is a strong hint, never an adjudication).
+func recordGrowth(ctx context.Context, db *store.DB, repoID, from, to string, commits []model.Commit) error {
+	prevElements, err := db.Elements(ctx, from)
+	if err != nil {
+		return err
+	}
+	prevRels, err := db.Relationships(ctx, from)
+	if err != nil {
+		return err
+	}
+	curElements, err := db.Elements(ctx, to)
+	if err != nil {
+		return err
+	}
+	curRels, err := db.Relationships(ctx, to)
+	if err != nil {
+		return err
+	}
+	events := growth.Diff(prevElements, prevRels, curElements, curRels)
+	if len(events) == 0 {
+		return nil
+	}
+	fileOf := map[string]string{}
+	for _, e := range prevElements {
+		fileOf[e.ID] = e.FilePath
+	}
+	for _, e := range curElements {
+		fileOf[e.ID] = e.FilePath
+	}
+	for i := range events {
+		events[i].RepoID, events[i].SnapshotFrom, events[i].SnapshotTo = repoID, from, to
+		if events[i].Kind != model.GrowthEdgeChanged {
+			events[i].CommitHash = commitFor(commits, fileOf[events[i].ElementID])
+		}
+	}
+	return db.SaveGrowthEvents(ctx, events)
+}
+
+// commitFor returns the hash of the newest commit touching path; commits is
+// newest first (gitcmd.Log order), so the first hit wins.
+func commitFor(commits []model.Commit, path string) string {
+	if path == "" {
+		return ""
+	}
+	for _, c := range commits {
+		for _, f := range c.Files {
+			if f == path {
+				return c.Hash
+			}
+		}
+	}
+	return ""
 }
 
 // snapshotCursor is the fallback cursor: the newest snapshot's bound commit.
