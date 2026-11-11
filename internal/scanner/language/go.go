@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -73,6 +74,7 @@ func (a goAdapter) Parse(ctx context.Context, root string) (Output, error) {
 	var (
 		packageErrors []string
 		comps         = map[string]*component{} // element id -> component
+		fileEls       = map[string]model.Element{}
 	)
 	containers := map[string]bool{} // pkgPath of packages named main
 
@@ -85,6 +87,22 @@ func (a goAdapter) Parse(ctx context.Context, root string) (Output, error) {
 		}
 		if pkg.IllTyped {
 			packageErrors = append(packageErrors, fmt.Sprintf("%s: package has type errors", pkg.PkgPath))
+		}
+		// File elements (PoC-13): every non-test .go file of every own
+		// package, including the ones that declare no exported type — the
+		// ghost files that made element-count area lie. They are canopy and
+		// diff material only; the C4 graph view filters them out.
+		// GoFiles are already absolute — no Join with pkg.Dir.
+		for _, f := range pkg.GoFiles {
+			rel, err := filepath.Rel(abs, f)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				continue // a package outside the root: not this repo's canopy
+			}
+			rel = filepath.ToSlash(rel)
+			fileEls[model.FileID(modulePath, rel)] = model.Element{
+				ID: model.FileID(modulePath, rel), Type: model.TypeFile,
+				Name: path.Base(rel), FilePath: rel, RepoID: repoID,
+			}
 		}
 		if pkg.Name == "main" {
 			containers[pkg.PkgPath] = true
@@ -99,15 +117,21 @@ func (a goAdapter) Parse(ctx context.Context, root string) (Output, error) {
 			id := model.ComponentID(pkg.PkgPath, named.Obj().Name())
 			c := &component{id: id, pkgPath: pkg.PkgPath, named: named}
 			comps[id] = c
+			filePath := relativeFile(abs, pkg, named.Obj().Pos())
 			elements = append(elements, model.Element{
 				ID: id, Type: model.TypeComponent, Name: named.Obj().Name(),
 				Description: docs[named.Obj()], RepoID: repoID,
-				FilePath: relativeFile(abs, pkg, named.Obj().Pos()),
+				FilePath: filePath,
 				Methods:  methodNames(named),
 			})
 		}
 	}
 
+	// Deduped by id: the map keeps one entry per file even if the loader
+	// saw it in two package variants.
+	for _, el := range fileEls {
+		elements = append(elements, el)
+	}
 	// packages.Load gives no order guarantee for its slice, and the global
 	// constraint requires sorted elements before Task 11's golden comparison.
 	slices.SortFunc(elements, func(a, b model.Element) int { return strings.Compare(a.ID, b.ID) })

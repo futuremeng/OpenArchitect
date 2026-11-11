@@ -18,6 +18,7 @@ type navItem struct {
 func navItems() []navItem {
 	return []navItem{
 		{"架构图", lucide.Network(), PageGraph},
+		{"树冠", lucide.Trees(), PageCanopy},
 		{"仓库", lucide.Package(), PageRepos},
 		{"设置", lucide.Settings(), PageSettings},
 	}
@@ -90,6 +91,8 @@ func (a *App) content(c *ui.Context) {
 		a.reposPage(c)
 	case PageSettings:
 		a.settingsPage(c)
+	case PageCanopy:
+		a.canopyPage(c)
 	default:
 		// Page 只有三个常量，default 就是 PageGraph。写成 case PageGraph
 		// 再加一个走不到的 default 分支是噪音。

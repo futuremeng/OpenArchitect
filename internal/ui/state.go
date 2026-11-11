@@ -9,6 +9,7 @@ import (
 
 	"github.com/oneo-me/onevra/source/components/command"
 	"github.com/oneo-me/onevra/source/components/flow"
+	"github.com/oneo-me/onevra/source/components/treemap"
 
 	"github.com/futuremeng/OpenArchitect/internal/config"
 	"github.com/futuremeng/OpenArchitect/internal/core/graph"
@@ -26,6 +27,9 @@ const (
 	PageGraph    Page = "graph"
 	PageRepos    Page = "repos"
 	PageSettings Page = "settings"
+	// PageCanopy 是树冠（growth 切片 E 的 treemap）：面积=File 元素规模，
+	// 色=距最近一次生长事件的新旧，caption=果实数。
+	PageCanopy Page = "canopy"
 )
 
 // Status is the scan lifecycle shown in the sidebar's status line.
@@ -126,8 +130,17 @@ type App struct {
 	// 帧内视图，由 regrow 从日志重算——时间轴一次重算一次，全程不查库。
 	growthLog []growthEntry
 	// growthByEl 每元素至多 growthCardLimit 条（新在前）。
-	growthByEl                map[string][]model.GrowthEvent
-	growthMin, growthMax      time.Time
+	growthByEl           map[string][]model.GrowthEvent
+	growthMin, growthMax time.Time
+
+	// 树冠（growth 切片 E 的 treemap）：canopyFiles 是快照里的 File 元素，
+	// canopyNodes 是 Reload 建好的树。面积取当前文件字节数——buildCanopy 里
+	// stat 一次，帧内零 IO。canopyFresh 是「数据刚变，下一帧关动画」旗标
+	// （treemap 调研 §9-4，PoC-12 量到数据变化后首帧 8 ms 尖峰）。
+	canopyFiles []model.Element
+	canopyNodes []treemap.Node
+	canopyState treemap.State
+	canopyFresh bool
 
 	// flowState is the flow camera/viewport state. spec §9.2 mandates App hold
 	// it and Task 19 passes &a.flowState to flow.View, so it is deliberately a

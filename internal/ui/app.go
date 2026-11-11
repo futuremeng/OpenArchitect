@@ -75,12 +75,14 @@ func (a *App) Reload(ctx context.Context) error {
 		a.snapshot = model.ArchitectureSnapshot{}
 		a.repoID = ""
 		a.graph = graph.Build(nil, nil)
+		a.canopyFiles = nil
 	} else {
 		var (
 			elements []model.Element
 			rels     []model.Relationship
 			pkgErrs  []string
 			first    model.ArchitectureSnapshot
+			files    []model.Element
 		)
 		for _, r := range repos {
 			id := string(r.ID)
@@ -99,7 +101,16 @@ func (a *App) Reload(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			elements = append(elements, el...)
+			// File elements are canopy material (PoC-13): the C4 graph view
+			// stays at System/Container/Component, the treemap gets its own
+			// list. They still ride the snapshot, so growth diff sees files.
+			for _, e := range el {
+				if e.Type == model.TypeFile {
+					files = append(files, e)
+				} else {
+					elements = append(elements, e)
+				}
+			}
 			rels = append(rels, rl...)
 			pkgErrs = append(pkgErrs, snapshot.PackageErrors...)
 			if first.ID == "" {
@@ -117,13 +128,18 @@ func (a *App) Reload(ctx context.Context) error {
 			a.repoID = ""
 		}
 		a.graph = graph.Build(elements, rels)
+		a.canopyFiles = files
 	}
+	// 数据变了：树冠下一帧关动画（treemap 调研 §9-4，PoC-12 量到数据变化
+	// 后首帧的 8 ms 尖峰）。
+	a.canopyFresh = true
 	if err := a.buildFruits(ctx, selected); err != nil {
 		return err
 	}
 	if err := a.buildGrowth(ctx, selected); err != nil {
 		return err
 	}
+	a.buildCanopy()
 	a.refreshView()
 	a.selected, a.drillInto, a.impact = "", "", nil
 	// 新图配旧锚点没有意义：焦点记忆和选中一起清。

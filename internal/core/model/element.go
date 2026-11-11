@@ -14,6 +14,10 @@ const (
 	TypeSystem    ElementType = "System"
 	TypeContainer ElementType = "Container"
 	TypeComponent ElementType = "Component"
+	// TypeFile is the treemap's area unit (PoC-13: element-count area made
+	// 41% of OpenArchitect's packages invisible). A File element is canopy
+	// material and diff material — it never enters the C4 graph view.
+	TypeFile ElementType = "File"
 )
 
 type Element struct {

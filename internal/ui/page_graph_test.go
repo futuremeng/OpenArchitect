@@ -344,14 +344,14 @@ func TestGraphPageRepoPickerTogglesRepos(t *testing.T) {
 	if a.selectedRepos[string(first.RepoID)] || !a.selectedRepos[string(second.RepoID)] {
 		t.Fatalf("chip click must toggle the repo out: %v", a.selectedRepos)
 	}
-	if len(a.graph.Elements()) != second.Elements {
-		t.Fatalf("graph elements = %d want %d", len(a.graph.Elements()), second.Elements)
+	if len(a.graph.Elements()) != graphElements(t, a, second) {
+		t.Fatalf("graph elements = %d want %d", len(a.graph.Elements()), graphElements(t, a, second))
 	}
 	if err := tt.Click(firstName); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if got, want := len(a.graph.Elements()), first.Elements+second.Elements; got != want {
+	if got, want := len(a.graph.Elements()), graphElements(t, a, first)+graphElements(t, a, second); got != want {
 		t.Fatalf("toggling back must restore the union: %d want %d", got, want)
 	}
 	// 全点掉 = 全选：什么都不看不是任何人的本意。

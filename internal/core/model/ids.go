@@ -1,6 +1,7 @@
 package model
 
 import (
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -21,7 +22,16 @@ func ComponentID(pkgPath, typeName string) string {
 // path and the same checkout's absolute path yield two different ids.
 func RepoIDFor(localPath string) string { return "repo:" + filepath.Clean(localPath) }
 
-// PkgPathOf reverses the package part of a Container or Component id.
+// FileID keys on the module path plus the slash-relative path inside the
+// module (PoC-13's fil: family). Callers pass the path already slash-
+// separated and cleaned — the same string an Element's FilePath carries.
+func FileID(modulePath, relPath string) string {
+	return "fil:" + modulePath + "/" + filepath.ToSlash(relPath)
+}
+
+// PkgPathOf reverses the package part of a Container, Component or File id.
+// For a File the answer is the import path of its directory: module path plus
+// the relative dir, which is exactly what the go tool would call that package.
 func PkgPathOf(id string) string {
 	switch {
 	case strings.HasPrefix(id, "ctn:"):
@@ -31,6 +41,8 @@ func PkgPathOf(id string) string {
 		if i := strings.LastIndex(body, "."); i >= 0 {
 			return body[:i]
 		}
+	case strings.HasPrefix(id, "fil:"):
+		return path.Dir(strings.TrimPrefix(id, "fil:"))
 	}
 	return ""
 }

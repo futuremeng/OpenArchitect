@@ -14,6 +14,8 @@ func TestIDRules(t *testing.T) {
 		{ComponentID(mod+"/internal/basket", "Basket"), "cmp:example.com/cart/internal/basket.Basket"},
 		// 泛型类型按调用方传入的裸声明名建 id：一个类型一个节点（spec §6.2）。
 		{ComponentID(mod+"/pkg", "Box"), "cmp:example.com/cart/pkg.Box"},
+		// File id（PoC-13）：模块路径 + 斜杠相对路径。
+		{FileID(mod, "internal/x/y.go"), "fil:example.com/cart/internal/x/y.go"},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
@@ -72,6 +74,13 @@ func TestPkgPathOf(t *testing.T) {
 	}
 	if got := PkgPathOf(SystemID(mod)); got != "" {
 		t.Fatalf("sys must have no package: got %q", got)
+	}
+	// fil: 的反向是文件所在目录的 import 路径。
+	if got := PkgPathOf(FileID(mod, "internal/x/y.go")); got != mod+"/internal/x" {
+		t.Fatalf("fil: got %q", got)
+	}
+	if got := PkgPathOf(FileID(mod, "main.go")); got != mod {
+		t.Fatalf("fil at module root: got %q", got)
 	}
 }
 

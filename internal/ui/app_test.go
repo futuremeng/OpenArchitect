@@ -42,6 +42,27 @@ func seedScan(t *testing.T, a *App, root string) scanner.Report {
 	return report
 }
 
+// graphElements 是报告条数里会进 C4 图的那部分：File 元素（PoC-13）只走
+// 树冠和 diff，不进图，所以「图=库存并集」这类断言要按类型折算。
+func graphElements(t *testing.T, a *App, report scanner.Report) int {
+	t.Helper()
+	els, err := a.db.Elements(context.Background(), report.SnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return countNonFile(els)
+}
+
+func countNonFile(els []model.Element) int {
+	n := 0
+	for _, e := range els {
+		if e.Type != model.TypeFile {
+			n++
+		}
+	}
+	return n
+}
+
 func TestNewAppDefaults(t *testing.T) {
 	a := newTestApp(t)
 	if a.Page() != PageGraph || a.status != StatusIdle {
@@ -76,7 +97,7 @@ func TestReloadUnionsAllSnapshottedRepos(t *testing.T) {
 	if a.repoID != "" || a.status != StatusIdle {
 		t.Fatalf("repoID/status = %q/%v", a.repoID, a.status)
 	}
-	if got, want := len(a.graph.Elements()), first.Elements+second.Elements; got != want {
+	if got, want := len(a.graph.Elements()), graphElements(t, a, first)+graphElements(t, a, second); got != want {
 		t.Fatalf("graph elements = %d want %d", got, want)
 	}
 }
@@ -338,7 +359,7 @@ func TestBeginScanCompletesScanThroughPost(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(storedA) == 0 || len(storedB) == 0 ||
-		len(a.graph.Elements()) != len(storedA)+len(storedB) ||
+		len(a.graph.Elements()) != countNonFile(storedA)+countNonFile(storedB) ||
 		!a.selectedRepos[string(first.RepoID)] || !a.selectedRepos[model.RepoIDFor(abs)] {
 		t.Fatalf("graph must be the union of stored rows: graph=%d stored=%d+%d selected=%v",
 			len(a.graph.Elements()), len(storedA), len(storedB), a.selectedRepos)
@@ -519,7 +540,7 @@ func TestGraphReposSelectUnionAndPersists(t *testing.T) {
 	if len(a.selectedRepos) != 2 {
 		t.Fatalf("default must select every snapshotted repo: %v", a.selectedRepos)
 	}
-	if got, want := len(a.graph.Elements()), first.Elements+second.Elements; got != want {
+	if got, want := len(a.graph.Elements()), graphElements(t, a, first)+graphElements(t, a, second); got != want {
 		t.Fatalf("union elements = %d want %d", got, want)
 	}
 	if err := a.SetGraphRepos(ctx, []string{string(first.RepoID)}); err != nil {
@@ -528,8 +549,8 @@ func TestGraphReposSelectUnionAndPersists(t *testing.T) {
 	if a.snapshot.ID != first.SnapshotID || a.repoID != string(first.RepoID) {
 		t.Fatalf("single pick must switch the graph: snapshot=%q repo=%q", a.snapshot.ID, a.repoID)
 	}
-	if len(a.graph.Elements()) != first.Elements {
-		t.Fatalf("picked graph elements = %d want %d", len(a.graph.Elements()), first.Elements)
+	if len(a.graph.Elements()) != graphElements(t, a, first) {
+		t.Fatalf("picked graph elements = %d want %d", len(a.graph.Elements()), graphElements(t, a, first))
 	}
 	b := NewApp(a.db)
 	if err := b.Reload(ctx); err != nil {

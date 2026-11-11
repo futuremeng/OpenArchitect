@@ -30,8 +30,8 @@ func TestRunWritesReadableSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// 1 System + 2 Container + Cart = 4，Task 9 的期望一致。
-	if report.Language != "go" || report.Elements != 4 || report.Relationships == 0 {
+	// 1 System + 2 Container + Cart + 4 File（PoC-13 树冠面积单位）= 8。
+	if report.Language != "go" || report.Elements != 8 || report.Relationships == 0 {
 		t.Fatalf("report = %+v", report)
 	}
 	elements, err := db.Elements(ctx, report.SnapshotID)

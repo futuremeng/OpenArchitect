@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+- 生长切片 E（树冠）：新页「树冠」= treemap 视图——面积=文件当前字节数，
+  颜色=距最近一次生长事件的新旧（30 天内全绿，一年褪到灰，无事件=灰），
+  角标=按文件精确重合数出的果实 commit 数；点开文件跳到架构图并选中其中
+  组件。前置的 `File` 元素落地（PoC-13 裁决）：scanner 为每个非测试 .go
+  产 `fil:` 元素（ghost 文件也有面积），schema 零改；File 元素只走树冠与
+  diff，不进 C4 图。重扫后首帧关动画（treemap 调研 §9-4）
 - 生长切片 E（时间轴）：底部时间轴从「果实游标」升级为「commit 序回放」——
   一条轴同时驱动果实与生长两个故事；生长事件时间经 commit 解析（事件自带
   hash 优先，退到 snapshot_to 快照的 commit，都落空按最老算）；拖动即回放
-  生长标记，重算全程不查库。treemap 树冠仍待做
+  生长标记，重算全程不查库
 - 生长切片 E（节点卡部分）：flow 节点卡新增「生长」区——展开卡画最近 ≤3 条
   事件小方块（added 绿 / removed 红 / signature-changed 橙 / edge-changed
   中性），折叠态一颗点，点阵档不画；数据在 Reload 一次装填 `growthByEl`，

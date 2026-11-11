@@ -40,6 +40,11 @@ func TestSimpleMultiMainElements(t *testing.T) {
 		"cmp:example.com/simple/internal/store.Cart",
 		"ctn:example.com/simple/cmd/api",
 		"ctn:example.com/simple/cmd/worker",
+		// File 元素（PoC-13）：树冠的面积单位，每个非测试 .go 一个。
+		"fil:example.com/simple/cmd/api/main.go",
+		"fil:example.com/simple/cmd/worker/main.go",
+		"fil:example.com/simple/doc.go",
+		"fil:example.com/simple/internal/store/store.go",
 		"sys:example.com/simple",
 	}
 	if got := idsOf(out.Elements); !slices.Equal(got, want) {
@@ -122,6 +127,9 @@ func TestSharedLibContainment(t *testing.T) {
 		"cmp:example.com/shared/core.Server",
 		"cmp:example.com/shared/edge.Client",
 		"ctn:example.com/shared/cmd/app",
+		"fil:example.com/shared/cmd/app/main.go",
+		"fil:example.com/shared/core/core.go",
+		"fil:example.com/shared/edge/edge.go",
 		"sys:example.com/shared",
 	}
 	if got := idsOf(out.Elements); !slices.Equal(got, want) {
@@ -160,6 +168,8 @@ func TestGenericAndInterfaceElements(t *testing.T) {
 	want := []string{
 		"cmp:example.com/generic/box.Box", "cmp:example.com/generic/box.Pair",
 		"cmp:example.com/generic/iface.Reader",
+		"fil:example.com/generic/box/box.go", "fil:example.com/generic/iface/iface.go",
+		"fil:example.com/generic/unexported/u.go",
 		"sys:example.com/generic",
 	}
 	if got := idsOf(out.Elements); !slices.Equal(got, want) {

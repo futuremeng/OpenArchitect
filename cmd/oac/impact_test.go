@@ -74,7 +74,7 @@ func TestRunScanThenGraphAndImpact(t *testing.T) {
 		t.Fatalf("runScan: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"snapshot s", "language go", "module example.com/simple", "elements 4"} {
+	for _, want := range []string{"snapshot s", "language go", "module example.com/simple", "elements 8"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("scan output missing %q:\n%s", want, out)
 		}
