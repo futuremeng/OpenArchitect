@@ -96,6 +96,39 @@ func TestReloadWithEmptyDatabase(t *testing.T) {
 	}
 }
 
+// TestReloadLoadsGrowthOntoElements 钉生长索引的装填：Reload 一次查询装进
+// growthByEl（帧内零查询），每元素封顶 growthCardLimit 条、新在前。
+func TestReloadLoadsGrowthOntoElements(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	seedScan(t, a, fixtureDir("simple-multi-main"))
+	if err := a.Reload(ctx); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	el := a.graph.Elements()[0]
+	kinds := []string{model.GrowthEdgeChanged, model.GrowthSignatureChanged,
+		model.GrowthRemoved, model.GrowthAdded}
+	events := make([]model.GrowthEvent, 0, len(kinds))
+	for i, k := range kinds {
+		events = append(events, model.GrowthEvent{RepoID: a.repos[0].ID,
+			SnapshotFrom: "s1", SnapshotTo: fmt.Sprintf("s%d", i+2),
+			ElementID: el.ID, Kind: k})
+	}
+	if err := a.db.SaveGrowthEvents(ctx, events); err != nil {
+		t.Fatalf("SaveGrowthEvents: %v", err)
+	}
+	if err := a.Reload(ctx); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	got := a.growthByEl[el.ID]
+	if len(got) != growthCardLimit {
+		t.Fatalf("growth events on card = %d, want cap %d", len(got), growthCardLimit)
+	}
+	if got[0].Kind != kinds[3] {
+		t.Fatalf("newest first broken: first = %q want %q", got[0].Kind, kinds[3])
+	}
+}
+
 // TestReloadEmptyBranchClearsSelection pins the hoisted clear: every Reload
 // that completes the read phase, empty-database branch included, ends with a
 // cleared selection — one writer, no asymmetry between the two branches.

@@ -121,6 +121,11 @@ type App struct {
 	fruitMaxFiles                   int
 	fruitMin, fruitMax, fruitCursor time.Time
 
+	// 生长索引（growth 切片 E）：element ID → 该元素最近至多 growthCardLimit
+	// 条事件（新在前）。和 fruits 同一条纪律——Reload 时一次装填，帧内只读
+	// map，卡片里零查询。
+	growthByEl map[string][]model.GrowthEvent
+
 	// flowState is the flow camera/viewport state. spec §9.2 mandates App hold
 	// it and Task 19 passes &a.flowState to flow.View, so it is deliberately a
 	// value field even though nothing here reads it yet.

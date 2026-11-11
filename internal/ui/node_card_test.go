@@ -104,3 +104,55 @@ func TestNodeCardLODStairs(t *testing.T) {
 		t.Fatalf("the icon level must still name the node, texts = %v", tt.Texts())
 	}
 }
+
+// TestGrowthMarksAddNoText 钉住生长区的性能契约：事件再多也只画 Box，不
+// 新增文本行（§9.3 守门测试的同族）；展开/折叠/图标/点阵四档都构建得出来。
+func TestGrowthMarksAddNoText(t *testing.T) {
+	el := model.Element{
+		ID:   "cmp:example.com/cart/internal/basket.Basket",
+		Type: model.TypeComponent,
+		Name: "Basket",
+	}
+	events := []model.GrowthEvent{
+		{ElementID: el.ID, Kind: model.GrowthEdgeChanged},
+		{ElementID: el.ID, Kind: model.GrowthSignatureChanged},
+		{ElementID: el.ID, Kind: model.GrowthAdded},
+	}
+	for _, tc := range []struct {
+		name   string
+		zoom   float32
+		expand bool
+		want   int
+	}{
+		{"full expanded", lodFull, true, 2},
+		{"full collapsed", lodFull, false, 2},
+		{"icon", lodDot, false, 1},
+		{"dot", 0.13, false, 0},
+	} {
+		badge := fruitBadge{growth: events, expand: tc.expand}
+		tt := ui.NewTester(func(c *ui.Context) { nodeCard(c, el, tc.zoom, badge) }, 220, 60)
+		if got := len(tt.Texts()); got != tc.want {
+			t.Errorf("%s: text lines = %d, want %d: %v", tc.name, got, tc.want, tt.Texts())
+		}
+	}
+}
+
+// TestGrowthColorKindsDistinct 钉四个 kind 的语义色：added/removed/
+// signature-changed 互不相同，edge-changed 与未知 kind 共用中性是设计。
+func TestGrowthColorKindsDistinct(t *testing.T) {
+	theme := ui.DarkTheme()
+	added := growthColor(model.GrowthAdded, theme)
+	removed := growthColor(model.GrowthRemoved, theme)
+	sig := growthColor(model.GrowthSignatureChanged, theme)
+	edge := growthColor(model.GrowthEdgeChanged, theme)
+	unknown := growthColor("?", theme)
+	if edge != unknown {
+		t.Error("edge-changed and unknown kinds must share the neutral color by design")
+	}
+	if added == removed || added == sig || removed == sig {
+		t.Error("added/removed/signature-changed must carry distinct colors")
+	}
+	if edge == added || edge == removed || edge == sig {
+		t.Error("edge-changed must not collide with the named kinds")
+	}
+}

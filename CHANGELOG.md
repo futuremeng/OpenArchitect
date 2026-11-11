@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 生长切片 E（节点卡部分）：flow 节点卡新增「生长」区——展开卡画最近 ≤3 条
+  事件小方块（added 绿 / removed 红 / signature-changed 橙 / edge-changed
+  中性），折叠态一颗点，点阵档不画；数据在 Reload 一次装填 `growthByEl`，
+  帧内零查询，卡片文本行数不变（§9.3 守门测试钉住）
+- 修复：`gitcmd.IsRepo` 认「是仓」不再认「在仓里」——scan root 恰在外层
+  git 仓内部时，不再把自己登记成带外层身份的幽灵仓（bare 仓仍认）
 - 生长切片 B：跨快照 element 级 diff 引擎——`growth_events` 表（schema v3）、
   `growth.Diff` 纯函数（added/removed/signature-changed/edge-changed）、
   sync 重扫后自动记账并按文件重合归因 commit、`oac growth <repo-id>` 查询面；

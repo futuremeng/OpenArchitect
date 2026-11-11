@@ -121,6 +121,9 @@ func (a *App) Reload(ctx context.Context) error {
 	if err := a.buildFruits(ctx, selected); err != nil {
 		return err
 	}
+	if err := a.buildGrowth(ctx, selected); err != nil {
+		return err
+	}
 	a.refreshView()
 	a.selected, a.drillInto, a.impact = "", "", nil
 	// 新图配旧锚点没有意义：焦点记忆和选中一起清。
@@ -254,6 +257,37 @@ func (a *App) buildFruits(ctx context.Context, selected map[string]bool) error {
 	}
 	slices.SortFunc(a.fruitLog, func(x, y fruitEntry) int { return y.when.Compare(x.when) })
 	a.reaggregateFruits()
+	return nil
+}
+
+// growthCardLimit 是单张卡上画得出的生长事件数上限：展开卡只有一行位置，
+// 超过三条读不出个体，三条以下才值得画（与 fruitBars 同一判断）。
+const growthCardLimit = 3
+
+// buildGrowth loads the selected repos' growth story onto the elements it
+// happened to. One query per repo at Reload — the card reads a map (frame-time
+// rule, same discipline as buildFruits). Cross-repo order is deliberately
+// unsorted: growth events carry no timestamp, and inventing one from rowid
+// across repos would compare unrelated histories. Per element the store's
+// newest-first order is real, and the first growthCardLimit are what the
+// expanded card draws.
+func (a *App) buildGrowth(ctx context.Context, selected map[string]bool) error {
+	a.growthByEl = map[string][]model.GrowthEvent{}
+	for _, r := range a.repos {
+		if !selected[r.ID] {
+			continue
+		}
+		events, err := a.db.GrowthEvents(ctx, r.ID, "", 500)
+		if err != nil {
+			return err
+		}
+		for _, e := range events {
+			if len(a.growthByEl[e.ElementID]) >= growthCardLimit {
+				continue
+			}
+			a.growthByEl[e.ElementID] = append(a.growthByEl[e.ElementID], e)
+		}
+	}
 	return nil
 }
 

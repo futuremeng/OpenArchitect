@@ -52,6 +52,7 @@ func (a *App) flowData() flow.Data {
 		badge := fruitBadge{
 			commits:  a.fruits[el.ID],
 			maxFiles: a.fruitMaxFiles,
+			growth:   a.growthByEl[el.ID],
 			// 分级渲染：选中/焦点卡展开成条，其余单点。600 卡全展开要多画
 			// ~1200 个 Box（超 10% 闸门），展开数被选中集大小天然封顶。
 			expand: el.ID == a.selected || el.ID == a.focusElement,

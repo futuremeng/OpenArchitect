@@ -61,6 +61,8 @@ type fruitBadge struct {
 	commits  []model.Commit
 	maxFiles int
 	expand   bool
+	// growth 是该元素最近的生长事件（新在前，至多 growthCardLimit 条）。
+	growth []model.GrowthEvent
 }
 
 func (b fruitBadge) tag() string {
@@ -125,6 +127,43 @@ func fruitBars(c *ui.Context, badge fruitBadge, t *ui.Theme) {
 	})
 }
 
+// growthColor 把事件类型映射成颜色语义：added 绿（多出来的）、removed 红
+// （没了的）、signature-changed 橙（还在但变了）、edge-changed 中性（结构
+// 挪了位，不值得点名）。红在这里是"消失"，与 Danger 的失败语义同形不同事。
+func growthColor(kind string, t *ui.Theme) ui.Color {
+	switch kind {
+	case model.GrowthAdded:
+		return t.Success
+	case model.GrowthRemoved:
+		return t.Danger
+	case model.GrowthSignatureChanged:
+		return t.Warning
+	default:
+		return t.TextMuted
+	}
+}
+
+// growthMarks 是节点卡的「生长」区（growth spec 切片 E）：展开卡画最近 ≤3
+// 条小方块，折叠态只留最近一条的一颗点——和果实同一套分级渲染，600 卡全
+// 展开同样要超帧时闸门。它不新增任何文本行（§9.3 的守门测试盯着）。
+func growthMarks(c *ui.Context, events []model.GrowthEvent, expand bool, t *ui.Theme) {
+	if len(events) == 0 {
+		return
+	}
+	if !expand {
+		ui.Box(c).Size(6, 6).Radius(3).Background(growthColor(events[0].Kind, t))
+		return
+	}
+	ui.Row(c).Gap(2).AlignItems(ui.Center).Children(func() {
+		for i, e := range events {
+			if i == growthCardLimit {
+				break
+			}
+			ui.Box(c).Size(6, 6).Radius(2).Background(growthColor(e.Kind, t))
+		}
+	})
+}
+
 func nodeCard(c *ui.Context, el model.Element, zoom float32, badge fruitBadge) {
 	t := c.Theme()
 	box := ui.Row(c).Size(cardWidth, cardHeight).Radius(flow.CardRadius).
@@ -148,6 +187,7 @@ func nodeCard(c *ui.Context, el model.Element, zoom float32, badge fruitBadge) {
 			text.Children(func() {
 				components.Text(c, el.Name).SingleLine().FontWeight(600).TextColor(t.Text)
 			})
+			growthMarks(c, badge.growth, false, t)
 			if badge.tag() != "" {
 				fruitDot(c, badge.tag(), 8)
 			}
@@ -158,6 +198,7 @@ func nodeCard(c *ui.Context, el model.Element, zoom float32, badge fruitBadge) {
 			components.Text(c, truncateMiddle(model.PkgPathOf(el.ID), pkgBudget)).
 				SingleLine().FontSize(t.Rem(0.8)).TextColor(t.TextMuted)
 		})
+		growthMarks(c, badge.growth, badge.expand, t)
 		switch {
 		case badge.expand && len(badge.commits) > 0:
 			fruitBars(c, badge, t)
