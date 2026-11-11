@@ -22,10 +22,34 @@ func run(ctx context.Context, dir string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// IsRepo reports whether dir carries git metadata.
+// IsRepo reports whether dir *is* a git repository — not merely inside one.
+// rev-parse --git-dir would answer true for every directory under any outer
+// repo, so a scan root that happens to live inside someone else's tree would
+// register itself as a phantom repo with the outer repo's identity. Comparing
+// the work tree's top level pins the answer to this directory; bare repos
+// have no work tree, so they are recognized by their own flag.
 func IsRepo(ctx context.Context, dir string) bool {
-	_, err := run(ctx, dir, "rev-parse", "--git-dir")
-	return err == nil
+	out, err := run(ctx, dir, "rev-parse", "--show-toplevel")
+	if err == nil {
+		return samePath(dir, strings.TrimSpace(out))
+	}
+	bare, berr := run(ctx, dir, "rev-parse", "--is-bare-repository")
+	return berr == nil && strings.TrimSpace(bare) == "true"
+}
+
+// samePath compares absolute, symlink-resolved paths.
+func samePath(a, b string) bool {
+	abs, err := filepath.Abs(a)
+	if err != nil {
+		return false
+	}
+	if resolved, rerr := filepath.EvalSymlinks(abs); rerr == nil {
+		abs = resolved
+	}
+	if resolved, rerr := filepath.EvalSymlinks(b); rerr == nil {
+		b = resolved
+	}
+	return abs == b
 }
 
 // IsLinkedWorktree reports whether dir is a `git worktree add` checkout or a

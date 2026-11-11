@@ -75,6 +75,41 @@ func TestIsRepoAndHead(t *testing.T) {
 	}
 }
 
+// A directory merely *inside* a repo is not one: without the top-level
+// compare, a scan root living in someone else's tree registered itself as a
+// phantom repo carrying the outer repo's identity.
+func TestIsRepoFalseInsideOuterRepo(t *testing.T) {
+	ctx := context.Background()
+	outer := newRepo(t)
+	sub := filepath.Join(outer, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if IsRepo(ctx, sub) {
+		t.Fatal("IsRepo true on a subdir of an outer repo")
+	}
+	inner := filepath.Join(sub, "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, inner, "init", "-q", "-b", "main")
+	if !IsRepo(ctx, inner) {
+		t.Fatal("IsRepo false on a nested repo")
+	}
+}
+
+// A bare repo has no work tree; the flag is the only way to know.
+func TestIsRepoTrueForBareRepo(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	git(t, dir, "init", "-q", "--bare")
+	if !IsRepo(context.Background(), dir) {
+		t.Fatal("IsRepo false on a bare repo")
+	}
+}
+
 func TestRemoteURLEmptyWithoutOrigin(t *testing.T) {
 	if got := RemoteURL(context.Background(), newRepo(t)); got != "" {
 		t.Fatalf("RemoteURL = %q, want empty", got)
