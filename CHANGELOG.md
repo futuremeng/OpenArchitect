@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 生长切片 E（时间轴）：底部时间轴从「果实游标」升级为「commit 序回放」——
+  一条轴同时驱动果实与生长两个故事；生长事件时间经 commit 解析（事件自带
+  hash 优先，退到 snapshot_to 快照的 commit，都落空按最老算）；拖动即回放
+  生长标记，重算全程不查库。treemap 树冠仍待做
 - 生长切片 E（节点卡部分）：flow 节点卡新增「生长」区——展开卡画最近 ≤3 条
   事件小方块（added 绿 / removed 红 / signature-changed 橙 / edge-changed
   中性），折叠态一颗点，点阵档不画；数据在 Reload 一次装填 `growthByEl`，

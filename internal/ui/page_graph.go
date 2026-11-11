@@ -32,18 +32,23 @@ func (a *App) graphPage(c *ui.Context) {
 }
 
 // timeScrubber 是底部时间轴（第二参考图第 5 条语言）：拖动=只看"游标之前"
-// 结出的果实，生长回放的最小形态。没有果实整条不画；满格=全部（游标归零）。
-// 拖动的代价是 reaggregateFruits 一次线性扫 fruitLog——不查库、不重扫。
+// 结出的果实与生长——一条轴回放 commit 序，两个故事共用（growth spec 切片
+// E）。两条日志都空整条不画；满格=全部（游标归零）。拖动的代价是
+// reaggregateFruits 与 regrow 各一次线性扫——不查库、不重扫。
 func (a *App) timeScrubber(c *ui.Context) {
-	if len(a.fruitLog) == 0 || a.fruitMax.IsZero() {
+	if len(a.fruitLog) == 0 && len(a.growthLog) == 0 {
 		return
+	}
+	lo, hi := a.cursorRange()
+	if hi.IsZero() {
+		return // 没有任何读得出时间的条目：无跨度可拖
 	}
 	t := c.Theme()
 	frac := 1.0
 	if !a.fruitCursor.IsZero() {
-		span := a.fruitMax.Sub(a.fruitMin)
+		span := hi.Sub(lo)
 		if span > 0 {
-			frac = float64(a.fruitCursor.Sub(a.fruitMin)) / float64(span)
+			frac = float64(a.fruitCursor.Sub(lo)) / float64(span)
 		}
 	}
 	label := "全部"
@@ -53,7 +58,7 @@ func (a *App) timeScrubber(c *ui.Context) {
 	ui.Row(c).FillWidth().Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 		components.Text(c, "时间轴").FontSize(t.Rem(.8)).TextColor(t.TextMuted)
 		v := frac
-		if ui.Slider(c, &v, 0, 1).Label("果实时间游标").Changed() {
+		if ui.Slider(c, &v, 0, 1).Label("时间游标").Changed() {
 			a.setCursorFrac(v)
 		}
 		components.Text(c, label).FontSize(t.Rem(.8)).TextColor(t.TextMuted)

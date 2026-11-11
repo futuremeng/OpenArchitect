@@ -129,6 +129,54 @@ func TestReloadLoadsGrowthOntoElements(t *testing.T) {
 	}
 }
 
+// TestGrowthTimelineReplay 钉时间轴的生长回放：事件时间经 commit 解析，
+// 游标之前的留在卡上、之后的消失，拖回满格全部回来。
+func TestGrowthTimelineReplay(t *testing.T) {
+	a := newTestApp(t)
+	ctx := context.Background()
+	seedScan(t, a, fixtureDir("simple-multi-main"))
+	if err := a.Reload(ctx); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	els := a.graph.Elements()
+	old, fresh := els[0], els[len(els)-1]
+	hash := func(n int) string { return fmt.Sprintf("%040d", n) }
+	if err := a.db.SaveCommits(ctx, []model.Commit{
+		{RepoID: a.repos[0].ID, Hash: hash(1), Date: "2026-01-01T00:00:00+08:00"},
+		{RepoID: a.repos[0].ID, Hash: hash(2), Date: "2026-01-11T00:00:00+08:00"},
+	}); err != nil {
+		t.Fatalf("SaveCommits: %v", err)
+	}
+	if err := a.db.SaveGrowthEvents(ctx, []model.GrowthEvent{
+		{RepoID: a.repos[0].ID, SnapshotTo: "s2", ElementID: old.ID,
+			Kind: model.GrowthAdded, CommitHash: hash(1)},
+		{RepoID: a.repos[0].ID, SnapshotTo: "s3", ElementID: fresh.ID,
+			Kind: model.GrowthAdded, CommitHash: hash(2)},
+	}); err != nil {
+		t.Fatalf("SaveGrowthEvents: %v", err)
+	}
+	if err := a.Reload(ctx); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if len(a.growthByEl[old.ID]) != 1 || len(a.growthByEl[fresh.ID]) != 1 {
+		t.Fatalf("both events must show at full cursor: %v", a.growthByEl)
+	}
+	if a.growthLog[0].ev.ElementID != fresh.ID {
+		t.Fatal("growthLog must be newest first by commit time")
+	}
+	a.setCursorFrac(0.4) // 游标落在 01-01 与 01-11 之间
+	if len(a.growthByEl[old.ID]) != 1 {
+		t.Fatalf("the 01-01 event must survive the cursor: %v", a.growthByEl)
+	}
+	if len(a.growthByEl[fresh.ID]) != 0 {
+		t.Fatalf("the 01-11 event must hide behind the cursor: %v", a.growthByEl)
+	}
+	a.setCursorFrac(1)
+	if len(a.growthByEl[fresh.ID]) != 1 {
+		t.Fatal("full cursor must restore every event")
+	}
+}
+
 // TestReloadEmptyBranchClearsSelection pins the hoisted clear: every Reload
 // that completes the read phase, empty-database branch included, ends with a
 // cleared selection — one writer, no asymmetry between the two branches.

@@ -121,10 +121,13 @@ type App struct {
 	fruitMaxFiles                   int
 	fruitMin, fruitMax, fruitCursor time.Time
 
-	// 生长索引（growth 切片 E）：element ID → 该元素最近至多 growthCardLimit
-	// 条事件（新在前）。和 fruits 同一条纪律——Reload 时一次装填，帧内只读
-	// map，卡片里零查询。
-	growthByEl map[string][]model.GrowthEvent
+	// 生长索引（growth 切片 E）：growthLog 是选中仓的全部生长事件原始日志
+	// （时间经 commit 解析，零时间=最老，与果实同一条裁决）；growthByEl 是
+	// 帧内视图，由 regrow 从日志重算——时间轴一次重算一次，全程不查库。
+	growthLog []growthEntry
+	// growthByEl 每元素至多 growthCardLimit 条（新在前）。
+	growthByEl                map[string][]model.GrowthEvent
+	growthMin, growthMax      time.Time
 
 	// flowState is the flow camera/viewport state. spec §9.2 mandates App hold
 	// it and Task 19 passes &a.flowState to flow.View, so it is deliberately a

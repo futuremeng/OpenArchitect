@@ -260,19 +260,27 @@ func (a *App) buildFruits(ctx context.Context, selected map[string]bool) error {
 	return nil
 }
 
+// growthEntry 是 growthLog 的一条。时间不是事件自带的——growth_events 没有
+// 时间戳列，时间一律经 commit 解析：事件自己的 commit_hash 优先，没有就退
+// 到 snapshot_to 那个快照的 commit。两条都落空的按最老算（游标之内永远可见），
+// 与 fruitEntry 的"读不懂的时间戳当作最老"同一条裁决。
+type growthEntry struct {
+	ev   model.GrowthEvent
+	when time.Time
+}
+
 // growthCardLimit 是单张卡上画得出的生长事件数上限：展开卡只有一行位置，
 // 超过三条读不出个体，三条以下才值得画（与 fruitBars 同一判断）。
 const growthCardLimit = 3
 
 // buildGrowth loads the selected repos' growth story onto the elements it
-// happened to. One query per repo at Reload — the card reads a map (frame-time
-// rule, same discipline as buildFruits). Cross-repo order is deliberately
-// unsorted: growth events carry no timestamp, and inventing one from rowid
-// across repos would compare unrelated histories. Per element the store's
-// newest-first order is real, and the first growthCardLimit are what the
-// expanded card draws.
+// happened to. Queries happen at Reload only — one growth read plus one
+// commit read per repo — and the card reads a map (frame-time rule, same
+// discipline as buildFruits). The log is sorted newest first by resolved
+// commit time; regrow turns it into the per-card view under the cursor.
 func (a *App) buildGrowth(ctx context.Context, selected map[string]bool) error {
-	a.growthByEl = map[string][]model.GrowthEvent{}
+	a.growthLog = nil
+	a.growthMin, a.growthMax = time.Time{}, time.Time{}
 	for _, r := range a.repos {
 		if !selected[r.ID] {
 			continue
@@ -281,14 +289,96 @@ func (a *App) buildGrowth(ctx context.Context, selected map[string]bool) error {
 		if err != nil {
 			return err
 		}
-		for _, e := range events {
-			if len(a.growthByEl[e.ElementID]) >= growthCardLimit {
-				continue
+		if len(events) == 0 {
+			continue
+		}
+		commits, err := a.db.Commits(ctx, r.ID, 200)
+		if err != nil {
+			return err
+		}
+		when := map[string]time.Time{}
+		for _, cm := range commits {
+			t, err := time.Parse(time.RFC3339, cm.Date)
+			if err == nil {
+				when[cm.Hash] = t
 			}
-			a.growthByEl[e.ElementID] = append(a.growthByEl[e.ElementID], e)
+		}
+		// Snapshot hashes are resolved lazily and memoised: the number of
+		// distinct snapshot_to values is the number of scans, not of events.
+		snapCommit := map[string]string{}
+		for _, e := range events {
+			t := when[e.CommitHash]
+			if t.IsZero() {
+				ch, ok := snapCommit[e.SnapshotTo]
+				if !ok {
+					s, err := a.db.Snapshot(ctx, e.SnapshotTo)
+					ch = s.CommitHash
+					if err != nil {
+						ch = "" // deleted snapshot: the event keeps no time
+					}
+					snapCommit[e.SnapshotTo] = ch
+				}
+				t = when[ch]
+			}
+			if !t.IsZero() {
+				if a.growthMin.IsZero() || t.Before(a.growthMin) {
+					a.growthMin = t
+				}
+				if t.After(a.growthMax) {
+					a.growthMax = t
+				}
+			}
+			a.growthLog = append(a.growthLog, growthEntry{ev: e, when: t})
 		}
 	}
+	// Stable: events whose time cannot be resolved keep the store's
+	// rowid-DESC order instead of being shuffled by an unstable sort.
+	slices.SortStableFunc(a.growthLog, func(x, y growthEntry) int { return y.when.Compare(x.when) })
+	a.regrow()
 	return nil
+}
+
+// regrow 从 growthLog 按游标重算帧内视图。scrub 一次重算一次，全程不查库。
+func (a *App) regrow() {
+	a.growthByEl = map[string][]model.GrowthEvent{}
+	for _, e := range a.growthLog {
+		if !a.fruitCursor.IsZero() && !e.when.IsZero() && e.when.After(a.fruitCursor) {
+			continue
+		}
+		if len(a.growthByEl[e.ev.ElementID]) >= growthCardLimit {
+			continue
+		}
+		a.growthByEl[e.ev.ElementID] = append(a.growthByEl[e.ev.ElementID], e.ev)
+	}
+}
+
+// cursorRange 是时间轴的可视跨度：果实与生长两条日志的并集。全零的边界不
+// 参与——读不出时间的事件按最老算，不该把跨度拖到纪元起点。
+func (a *App) cursorRange() (lo, hi time.Time) {
+	lo, hi = a.fruitMin, a.fruitMax
+	if a.growthMax.After(hi) {
+		hi = a.growthMax
+	}
+	if !a.growthMin.IsZero() && (lo.IsZero() || a.growthMin.Before(lo)) {
+		lo = a.growthMin
+	}
+	return lo, hi
+}
+
+// setCursorFrac 把滑杆的 0–1 位置换算成时间游标并重聚合。满格是"全部"：
+// 游标归零（无过滤），而不是最大值——差一个 commit 的边界不该藏住最新果实。
+// 范围取果实与生长两条日志的并集：时间轴只有一条，回放的是 commit 序，
+// 两个故事共用同一个游标（growth spec 切片 E「生长时间轴」的落点）。
+func (a *App) setCursorFrac(frac float64) {
+	lo, hi := a.cursorRange()
+	if frac >= 1 || hi.IsZero() {
+		a.fruitCursor = time.Time{}
+	} else {
+		span := hi.Sub(lo)
+		a.fruitCursor = lo.Add(time.Duration(frac * float64(span)))
+	}
+	a.reaggregateFruits()
+	a.regrow()
 }
 
 // reaggregateFruits 从 fruitLog 重算帧内视图（a.fruits 与图例计数），按游标
@@ -315,18 +405,6 @@ func (a *App) reaggregateFruits() {
 			}
 		}
 	}
-}
-
-// setCursorFrac 把滑杆的 0–1 位置换算成时间游标并重聚合。满格是"全部"：
-// 游标归零（无过滤），而不是 fruitMax——差一个 commit 的边界不该藏住最新果实。
-func (a *App) setCursorFrac(frac float64) {
-	if frac >= 1 || a.fruitMax.IsZero() {
-		a.fruitCursor = time.Time{}
-	} else {
-		span := a.fruitMax.Sub(a.fruitMin)
-		a.fruitCursor = a.fruitMin.Add(time.Duration(frac * float64(span)))
-	}
-	a.reaggregateFruits()
 }
 
 // BeginSync starts one forest round over the configured scan root. It shares
